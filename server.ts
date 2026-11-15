@@ -267,6 +267,124 @@ Regras importantes:
       .replace(/\s+/g, " ");
   }
 
+  app.post("/api/extract-volunteers", async (req, res) => {
+    try {
+      const { imageBase64, mimeType } = req.body as {
+        imageBase64?: string;
+        mimeType?: string;
+      };
+
+      if (!imageBase64 || !mimeType) {
+        return res.status(400).json({
+          error: "Envie uma imagem válida para extrair os nomes dos voluntários.",
+        });
+      }
+
+      const ai = getGeminiClient();
+      if (!ai) {
+        return res.status(500).json({
+          error: "Chave da API Gemini não configurada no servidor.",
+        });
+      }
+
+      const dataUrlMatch = imageBase64.match(/^data:([^;]+);base64,/);
+      const resolvedMimeType =
+        dataUrlMatch?.[1] ||
+        (mimeType && mimeType.startsWith("image/") ? mimeType : "image/jpeg");
+
+      const cleanBase64 = imageBase64.includes(",")
+        ? imageBase64.split(",")[1]
+        : imageBase64;
+
+      const prompt = `Você é um extrator preciso de nomes de voluntários do Ministério Infantil (MEVAM Kids).
+Analise TODA a imagem enviada (todas as colunas de datas, todas as turmas, manhã e noite, ou lista de nomes).
+Extraia TODOS os nomes de voluntários encontrados na imagem, junto com a função/turma em que aparecem (ex: "Louvor 3 a 6 anos", "Professor(a) 5 anos", "Auxiliar 5 anos", "Refeitório", "Pipoca", "Segurança", "Mídia", "Pastores", "Coordenação", ou "Voluntário" se for uma lista simples sem função).
+
+Regras importantes:
+1. Leia TODAS as colunas e TODAS as linhas da imagem, sem pular nenhum domingo ou turma.
+2. NÃO inclua cabeçalhos de datas (ex: "1/nov", "15/11"), horários, títulos de colunas ou rótulos vazios ("-", "X", "vago").
+3. Se uma célula tiver dois ou mais nomes separados por "/" ou "," ou quebra de linha, retorne cada pessoa como um item separado.
+4. Mantenha duplas escritas juntas com "e" (como "Pr. William e Liara" ou "Odivaldo e Nice") exatamente como aparecem na célula.
+5. Preserve a grafia exata e acentuação de cada nome encontrado na imagem.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-4-hydrogen",
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: resolvedMimeType,
+                data: cleanBase64,
+              },
+            },
+            { text: prompt },
+          ],
+        },
+        config: {
+          thinkingConfig: {
+            thinkingLevel: ThinkingLevel.LOW,
+          },
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              volunteers: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: {
+                      type: Type.STRING,
+                      description: "Nome do voluntário exatamente como aparece na imagem.",
+                    },
+                    role: {
+                      type: Type.STRING,
+                      description: "Função, turma ou contexto em que esse nome aparece na imagem.",
+                    },
+                  },
+                  required: ["name", "role"],
+                },
+              },
+            },
+            required: ["volunteers"],
+          },
+        },
+      });
+
+      const rawText = (response.text ?? "{}").trim();
+      const parsed = JSON.parse(rawText);
+      const rawList = Array.isArray(parsed.volunteers) ? parsed.volunteers : [];
+
+      // Deduplicate exact same (normalizedName + normalizedRole) across columns,
+      // while preserving if the same name appears in two different roles!
+      const seenPairs = new Set<string>();
+      const volunteers: { name: string; role: string }[] = [];
+
+      for (const item of rawList) {
+        if (!item || typeof item.name !== "string") continue;
+        const cleanName = item.name.trim().replace(/\s+/g, " ");
+        if (!cleanName || cleanName.length < 2) continue;
+        const cleanRole =
+          typeof item.role === "string" && item.role.trim()
+            ? item.role.trim()
+            : "Voluntário";
+        const pairKey = `${normalizeNameKeyServer(cleanName)}::${normalizeNameKeyServer(cleanRole)}`;
+        if (seenPairs.has(pairKey)) continue;
+        seenPairs.add(pairKey);
+        volunteers.push({ name: cleanName, role: cleanRole });
+      }
+
+      return res.json({ volunteers });
+    } catch (err) {
+      console.error("Erro ao extrair lista de voluntários:", err);
+      const message =
+        err instanceof Error ? err.message : "Erro ao processar a imagem.";
+      return res.status(500).json({
+        error: `Não foi possível extrair os voluntários da imagem: ${message}`,
+      });
+    }
+  });
+
   // Supabase Shared Cloud Sync Routes (sem autenticação)
   app.get("/api/cloud/state", async (_req, res) => {
     try {
@@ -475,23 +593,36 @@ Regras importantes:
         }
       }
 
-      if (contactBook && typeof contactBook === "object") {
+      if (
+        (contactBook && typeof contactBook === "object") ||
+        (contactNames && typeof contactNames === "object")
+      ) {
         const dedupContacts = new Map<
           string,
           { name_key: string; volunteer_name: string; phone: string; updated_at: string }
         >();
-        for (const [k, v] of Object.entries(contactBook)) {
+        const allKeys = new Set<string>([
+          ...Object.keys(contactBook || {}),
+          ...Object.keys(contactNames || {}),
+        ]);
+
+        for (const k of allKeys) {
           const normKey = normalizeNameKeyServer(k);
-          const phone = typeof v === "string" ? v.trim() : "";
-          if (!normKey || !phone) continue;
+          if (!normKey) continue;
+          const rawPhone = contactBook?.[normKey] ?? contactBook?.[k] ?? "";
+          const phone = typeof rawPhone === "string" ? rawPhone.trim() : "";
           const displayName =
             contactNames?.[normKey]?.trim() ||
             contactNames?.[k]?.trim() ||
             k.trim();
+          const prev = dedupContacts.get(normKey);
           dedupContacts.set(normKey, {
             name_key: normKey,
-            volunteer_name: displayName,
-            phone,
+            volunteer_name:
+              prev && prev.volunteer_name.length > displayName.length
+                ? prev.volunteer_name
+                : displayName,
+            phone: phone || prev?.phone || "",
             updated_at: nowIso,
           });
         }

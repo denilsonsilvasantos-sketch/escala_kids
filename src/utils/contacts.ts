@@ -216,6 +216,13 @@ export function hydrateEntriesWithSavedContacts(
   return { entries: next, changed };
 }
 
+export function isSelfConfirmedSame(key: string, links: ContactLink[]): boolean {
+  const norm = normalizeNameKey(key);
+  if (!norm) return false;
+  const selfId = makeCanonicalPairId(norm, norm);
+  return links.some((l) => l.id === selfId && l.relation === "same");
+}
+
 export function buildKnownDirectory(params: {
   entries: ScheduleEntry[];
   contactBook: Record<string, string>;
@@ -223,14 +230,27 @@ export function buildKnownDirectory(params: {
 }): Map<string, { displayName: string; phone: string }> {
   const directory = new Map<string, { displayName: string; phone: string }>();
 
+  for (const [rawKey, display] of Object.entries(params.contactNames)) {
+    const key = normalizeNameKey(rawKey);
+    if (!key || !display.trim()) continue;
+    directory.set(key, {
+      displayName: display.trim(),
+      phone: (params.contactBook[key] || params.contactBook[rawKey] || "").trim(),
+    });
+  }
+
   for (const [rawKey, rawPhone] of Object.entries(params.contactBook)) {
     const key = normalizeNameKey(rawKey);
     if (!key) continue;
+    const existing = directory.get(key);
     const displayName =
-      params.contactNames[key] || params.contactNames[rawKey] || rawKey;
+      existing?.displayName ||
+      params.contactNames[key] ||
+      params.contactNames[rawKey] ||
+      rawKey;
     directory.set(key, {
       displayName: displayName.trim(),
-      phone: rawPhone.trim(),
+      phone: rawPhone.trim() || existing?.phone || "",
     });
   }
 
@@ -262,6 +282,8 @@ export function buildKnownDirectory(params: {
 export function findPendingMatchForName(params: {
   incomingName: string;
   incomingPhone?: string;
+  incomingRole?: string;
+  checkExactSameName?: boolean;
   entries: ScheduleEntry[];
   contactBook: Record<string, string>;
   contactNames: Record<string, string>;
@@ -283,17 +305,34 @@ export function findPendingMatchForName(params: {
   const candidates: ContactMatchCandidate[] = [];
   const seenKeys = new Set<string>();
 
+  // Check if there are multiple distinct people sharing this first/exact name
+  const hasDistinctSibling = params.contactLinks.some(
+    (l) =>
+      l.relation === "distinct" &&
+      (normalizeNameKey(l.nameKeyA) === incomingKey ||
+        normalizeNameKey(l.nameKeyB) === incomingKey)
+  );
+
   for (const [candidateKey, info] of directory.entries()) {
-    if (candidateKey === incomingKey) continue;
     if (seenKeys.has(candidateKey)) continue;
-    if (!areNamesPotentialMatch(cleanName, info.displayName || candidateKey)) {
-      continue;
-    }
-    if (areKeysLinkedSame(incomingKey, candidateKey, params.contactLinks)) {
-      continue;
-    }
-    if (areKeysMarkedDistinct(incomingKey, candidateKey, params.contactLinks)) {
-      continue;
+
+    const isExactMatch = candidateKey === incomingKey;
+    if (isExactMatch) {
+      const shouldPromptExact =
+        (params.checkExactSameName &&
+          !isSelfConfirmedSame(incomingKey, params.contactLinks)) ||
+        hasDistinctSibling;
+      if (!shouldPromptExact) continue;
+    } else {
+      if (!areNamesPotentialMatch(cleanName, info.displayName || candidateKey)) {
+        continue;
+      }
+      if (areKeysLinkedSame(incomingKey, candidateKey, params.contactLinks)) {
+        continue;
+      }
+      if (areKeysMarkedDistinct(incomingKey, candidateKey, params.contactLinks)) {
+        continue;
+      }
     }
 
     // Group connected 'same' aliases so we show the cleanest single card per person
@@ -325,7 +364,6 @@ export function findPendingMatchForName(params: {
 
   if (candidates.length === 0) return null;
 
-  // Prefer candidates that already have a saved phone first
   candidates.sort((a, b) => {
     if (Boolean(a.phone) !== Boolean(b.phone)) {
       return a.phone ? -1 : 1;
@@ -333,10 +371,14 @@ export function findPendingMatchForName(params: {
     return b.displayName.length - a.displayName.length;
   });
 
+  const isSameNameMatch = candidates.some((c) => c.key === incomingKey);
+
   return {
     incomingName: cleanName,
     incomingKey,
     incomingPhone: (params.incomingPhone || "").trim(),
+    incomingRole: params.incomingRole,
+    matchType: isSameNameMatch ? "same-name" : "similar",
     candidates,
   };
 }

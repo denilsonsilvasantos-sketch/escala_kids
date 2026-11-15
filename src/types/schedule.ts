@@ -64,7 +64,14 @@ export interface PendingContactMatch {
   incomingName: string;
   incomingKey: string;
   incomingPhone: string;
+  incomingRole?: string;
+  matchType: "same-name" | "similar";
   candidates: ContactMatchCandidate[];
 }
 
-export type AppView = "escala" | "modelos" | "importar";
+export interface ExtractedVolunteerOccurrence {
+  name: string;
+  role: string;
+}
+
+export type AppView = "escala" | "voluntarios" | "modelos" | "importar";

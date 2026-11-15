@@ -17,7 +17,6 @@ interface HeaderProps {
   onOpenBatchModal: () => void;
   onOpenQuickAdd: () => void;
   onOpenSyncModal: () => void;
-  onOpenContactsModal: () => void;
 }
 
 export function Header({
@@ -28,7 +27,6 @@ export function Header({
   onOpenBatchModal,
   onOpenQuickAdd,
   onOpenSyncModal,
-  onOpenContactsModal,
 }: HeaderProps) {
   const navItems: {
     id: AppView;
@@ -41,6 +39,12 @@ export function Header({
       label: "Escala e Envio",
       mobileLabel: "Escala",
       icon: CalendarCheck,
+    },
+    {
+      id: "voluntarios",
+      label: "Voluntários",
+      mobileLabel: "Voluntários",
+      icon: Users,
     },
     {
       id: "modelos",
@@ -68,7 +72,7 @@ export function Header({
             Escala Kids
           </button>
 
-          {/* Desktop 3-link Navigation */}
+          {/* Desktop 4-link Navigation */}
           <nav
             className="hidden md:flex items-center gap-7"
             aria-label="Navegação principal"
@@ -98,18 +102,8 @@ export function Header({
             })}
           </nav>
 
-          {/* Actions: Contacts + Sync + Primary Action */}
+          {/* Actions: Sync + Primary Action */}
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={onOpenContactsModal}
-              title="Contatos vinculados"
-              className="h-9 min-w-[40px] inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 text-xs font-medium border border-[#E8E6DF] text-zinc-700 bg-white hover:bg-[#FAF9F5] rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
-            >
-              <Users className="w-3.5 h-3.5 shrink-0 text-zinc-600" />
-              <span className="hidden sm:inline">Contatos</span>
-            </button>
-
             <button
               type="button"
               onClick={onOpenSyncModal}
@@ -151,10 +145,10 @@ export function Header({
         </div>
       </header>
 
-      {/* Mobile Fixed Bottom Navigation Bar (always accessible in thumb zone) */}
+      {/* Mobile Fixed Bottom Navigation Bar */}
       <nav
         aria-label="Navegação inferior"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E8E6DF] grid grid-cols-3 h-14 pb-[env(safe-area-inset-bottom)]"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E8E6DF] grid grid-cols-4 h-14 pb-[env(safe-area-inset-bottom)]"
       >
         {navItems.map((item) => {
           const Icon = item.icon;

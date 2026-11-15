@@ -7,7 +7,7 @@ import { BatchQueueModal } from "./components/BatchQueueModal";
 import { QuickAddModal } from "./components/QuickAddModal";
 import { CloudSyncModal } from "./components/CloudSyncModal";
 import { ContactMatchModal } from "./components/ContactMatchModal";
-import { ContactsBookModal } from "./components/ContactsBookModal";
+import { VolunteersView } from "./components/VolunteersView";
 import {
   DEFAULT_TEMPLATES,
   EXTRA_IMAGE_ENTRIES_15_11,
@@ -19,6 +19,7 @@ import type {
   AppView,
   ContactLink,
   ContactMatchCandidate,
+  ExtractedVolunteerOccurrence,
   GroupDefinition,
   MessageTemplatesState,
   PendingContactMatch,
@@ -161,7 +162,6 @@ export default function App() {
   }>({ isOpen: false, shift: "noite" });
 
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
-  const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
   const [pendingContactMatches, setPendingContactMatches] = useState<
     PendingContactMatch[]
   >([]);
@@ -811,38 +811,182 @@ export default function App() {
     }
 
     setPendingContactMatches((prev) =>
-      prev.filter((p) => p.incomingKey !== pending.incomingKey)
+      prev.filter(
+        (p) =>
+          !(
+            p.incomingKey === pending.incomingKey &&
+            (p.incomingRole || "") === (pending.incomingRole || "")
+          )
+      )
     );
   };
 
-  const handleResolveDistinctPeople = (pending: PendingContactMatch) => {
-    const newLinks: ContactLink[] = pending.candidates.map((c) => ({
-      id: makeCanonicalPairId(pending.incomingKey, c.key),
-      nameKeyA: pending.incomingKey,
-      nameKeyB: c.key,
-      displayNameA: pending.incomingName,
-      displayNameB: c.displayName,
-      relation: "distinct",
-    }));
+  const handleResolveDistinctPeople = (
+    pending: PendingContactMatch,
+    distinctDetails?: { newDisplayName: string; newPhone: string }
+  ) => {
+    const targetName = distinctDetails?.newDisplayName.trim() || pending.incomingName;
+    const targetKey = normalizeNameKey(targetName);
+    const targetPhone = distinctDetails?.newPhone.trim() || pending.incomingPhone;
 
-    setContactLinks((prev) => {
-      const newIds = new Set(newLinks.map((l) => l.id));
-      return [...prev.filter((l) => !newIds.has(l.id)), ...newLinks];
-    });
+    const newLinks: ContactLink[] = [];
+    for (const c of pending.candidates) {
+      if (targetKey !== c.key) {
+        newLinks.push({
+          id: makeCanonicalPairId(targetKey, c.key),
+          nameKeyA: targetKey,
+          nameKeyB: c.key,
+          displayNameA: targetName,
+          displayNameB: c.displayName,
+          relation: "distinct",
+        });
+      }
+      if (pending.incomingKey !== targetKey && pending.incomingKey !== c.key) {
+        newLinks.push({
+          id: makeCanonicalPairId(pending.incomingKey, targetKey),
+          nameKeyA: pending.incomingKey,
+          nameKeyB: targetKey,
+          displayNameA: pending.incomingName,
+          displayNameB: targetName,
+          relation: "distinct",
+        });
+      }
+    }
+
+    if (newLinks.length > 0) {
+      setContactLinks((prev) => {
+        const newIds = new Set(newLinks.map((l) => l.id));
+        return [...prev.filter((l) => !newIds.has(l.id)), ...newLinks];
+      });
+    }
+
+    if (targetKey) {
+      setContactNames((prev) => ({ ...prev, [targetKey]: targetName }));
+      if (targetPhone) {
+        setContactBook((book) => ({ ...book, [targetKey]: targetPhone }));
+      }
+    }
 
     setPendingContactMatches((prev) =>
-      prev.filter((p) => p.incomingKey !== pending.incomingKey)
+      prev.filter(
+        (p) =>
+          !(
+            p.incomingKey === pending.incomingKey &&
+            (p.incomingRole || "") === (pending.incomingRole || "")
+          )
+      )
     );
   };
 
   const handleSkipPendingMatch = (pending: PendingContactMatch) => {
     setPendingContactMatches((prev) =>
-      prev.filter((p) => p.incomingKey !== pending.incomingKey)
+      prev.filter(
+        (p) =>
+          !(
+            p.incomingKey === pending.incomingKey &&
+            (p.incomingRole || "") === (pending.incomingRole || "")
+          )
+      )
     );
   };
 
   const handleRemoveContactLink = (linkId: string) => {
     setContactLinks((prev) => prev.filter((l) => l.id !== linkId));
+  };
+
+  const handleAddVolunteerToDirectory = (name: string, phone: string) => {
+    const cleanName = name.trim();
+    const normKey = normalizeNameKey(cleanName);
+    if (!normKey) return;
+
+    const match = findPendingMatchForName({
+      incomingName: cleanName,
+      incomingPhone: phone,
+      checkExactSameName: true,
+      entries: entriesRef.current,
+      contactBook: contactBookRef.current,
+      contactNames: contactNamesRef.current,
+      contactLinks: contactLinksRef.current,
+    });
+
+    if (match) {
+      setPendingContactMatches((prev) => [...prev, match]);
+      return;
+    }
+
+    bindPhoneToPerson(cleanName, phone);
+  };
+
+  const handleDeleteVolunteerFromDirectory = (primaryKey: string) => {
+    const sameKeys = getSamePersonKeys(primaryKey, contactLinksRef.current);
+    setContactBook((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (sameKeys.has(normalizeNameKey(k))) delete next[k];
+      }
+      return next;
+    });
+    setContactNames((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (sameKeys.has(normalizeNameKey(k))) delete next[k];
+      }
+      return next;
+    });
+    setContactLinks((prev) =>
+      prev.filter(
+        (l) =>
+          !sameKeys.has(normalizeNameKey(l.nameKeyA)) &&
+          !sameKeys.has(normalizeNameKey(l.nameKeyB))
+      )
+    );
+  };
+
+  const handleImportExtractedVolunteers = (
+    items: ExtractedVolunteerOccurrence[]
+  ) => {
+    const workingNames = { ...contactNamesRef.current };
+    const nextLinks = [...contactLinksRef.current];
+    const pendingList: PendingContactMatch[] = [];
+
+    for (const item of items) {
+      const cleanName = item.name.trim();
+      const key = normalizeNameKey(cleanName);
+      if (!key) continue;
+
+      const match = findPendingMatchForName({
+        incomingName: cleanName,
+        incomingRole: item.role,
+        checkExactSameName: true,
+        entries: entriesRef.current,
+        contactBook: contactBookRef.current,
+        contactNames: workingNames,
+        contactLinks: nextLinks,
+      });
+
+      if (match) {
+        pendingList.push(match);
+      } else {
+        workingNames[key] = cleanName;
+      }
+    }
+
+    setContactNames(workingNames);
+
+    if (pendingList.length > 0) {
+      setPendingContactMatches((prev) => {
+        const existingTokens = new Set(
+          prev.map((p) => `${p.incomingKey}::${p.incomingRole || ""}`)
+        );
+        return [
+          ...prev,
+          ...pendingList.filter(
+            (m) =>
+              !existingTokens.has(`${m.incomingKey}::${m.incomingRole || ""}`)
+          ),
+        ];
+      });
+    }
   };
 
   return (
@@ -856,7 +1000,6 @@ export default function App() {
         onOpenQuickAdd={() =>
           setQuickAddState({ isOpen: true, shift: "noite" })
         }
-        onOpenContactsModal={() => setIsContactsModalOpen(true)}
         onOpenSyncModal={() => {
           setIsSyncModalOpen(true);
           if (supabaseConfigured) {
@@ -904,6 +1047,20 @@ export default function App() {
           />
         )}
 
+        {activeView === "voluntarios" && (
+          <VolunteersView
+            entries={entries}
+            contactBook={contactBook}
+            contactNames={contactNames}
+            contactLinks={contactLinks}
+            onSavePersonPhone={(name, phone) => bindPhoneToPerson(name, phone)}
+            onAddVolunteer={handleAddVolunteerToDirectory}
+            onDeleteVolunteer={handleDeleteVolunteerFromDirectory}
+            onImportExtractedVolunteers={handleImportExtractedVolunteers}
+            onRemoveLink={handleRemoveContactLink}
+          />
+        )}
+
         {activeView === "modelos" && (
           <TemplatesView
             templates={templates}
@@ -915,6 +1072,8 @@ export default function App() {
         {activeView === "importar" && (
           <ImageImporterView
             activeSundayISO={sundayISO}
+            contactBook={contactBook}
+            contactLinks={contactLinks}
             onApplyImportedEntries={handleApplyImportedEntries}
           />
         )}
@@ -941,17 +1100,6 @@ export default function App() {
         contactNames={contactNames}
         contactLinks={contactLinks}
         onAddEntry={handleAddEntry}
-      />
-
-      <ContactsBookModal
-        isOpen={isContactsModalOpen}
-        onClose={() => setIsContactsModalOpen(false)}
-        entries={entries}
-        contactBook={contactBook}
-        contactNames={contactNames}
-        contactLinks={contactLinks}
-        onSavePersonPhone={(name, phone) => bindPhoneToPerson(name, phone)}
-        onRemoveLink={handleRemoveContactLink}
       />
 
       <ContactMatchModal

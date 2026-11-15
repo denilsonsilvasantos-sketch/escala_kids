@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { UserCheck, UserPlus, Phone, X } from "lucide-react";
 import type {
   ContactMatchCandidate,
@@ -12,7 +12,10 @@ interface ContactMatchModalProps {
     pending: PendingContactMatch,
     candidate: ContactMatchCandidate
   ) => void;
-  onResolveDistinct: (pending: PendingContactMatch) => void;
+  onResolveDistinct: (
+    pending: PendingContactMatch,
+    distinctDetails?: { newDisplayName: string; newPhone: string }
+  ) => void;
   onSkip: (pending: PendingContactMatch) => void;
 }
 
@@ -23,6 +26,23 @@ export function ContactMatchModal({
   onSkip,
 }: ContactMatchModalProps) {
   const current = pendingQueue[0] || null;
+  const [isNamingDistinct, setIsNamingDistinct] = useState(false);
+  const [distinctName, setDistinctName] = useState("");
+  const [distinctPhone, setDistinctPhone] = useState("");
+
+  useEffect(() => {
+    setIsNamingDistinct(false);
+    if (current) {
+      const suggestion = current.incomingRole
+        ? `${current.incomingName} (${current.incomingRole})`
+        : `${current.incomingName} 2`;
+      setDistinctName(suggestion);
+      setDistinctPhone(current.incomingPhone || "");
+    } else {
+      setDistinctName("");
+      setDistinctPhone("");
+    }
+  }, [current]);
 
   useEffect(() => {
     if (!current) return;
@@ -34,6 +54,26 @@ export function ContactMatchModal({
   }, [current, onSkip]);
 
   if (!current) return null;
+
+  const isExactSameName = current.matchType === "same-name";
+
+  const handleClickDistinct = () => {
+    if (isExactSameName) {
+      setIsNamingDistinct(true);
+    } else {
+      onResolveDistinct(current);
+    }
+  };
+
+  const handleConfirmDistinctForm = (e: FormEvent) => {
+    e.preventDefault();
+    const cleanName = distinctName.trim();
+    if (!cleanName) return;
+    onResolveDistinct(current, {
+      newDisplayName: cleanName,
+      newPhone: distinctPhone.trim(),
+    });
+  };
 
   return (
     <div
@@ -53,12 +93,16 @@ export function ContactMatchModal({
               id="contact-match-title"
               className="font-display text-base font-semibold text-zinc-900"
             >
-              Confirmar identidade do voluntário
+              {isExactSameName
+                ? "Nome igual encontrado"
+                : "Confirmar identidade do voluntário"}
             </h2>
             <p className="text-xs text-zinc-500 mt-0.5">
               {pendingQueue.length > 1
                 ? `Faltam ${pendingQueue.length} confirmações para vincular contatos`
-                : "Encontramos um nome parecido já cadastrado"}
+                : isExactSameName
+                  ? "Verifique se é a mesma pessoa ou outra pessoa com o mesmo nome"
+                  : "Encontramos um nome parecido já cadastrado"}
             </p>
           </div>
           <button
@@ -74,7 +118,7 @@ export function ContactMatchModal({
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-5 sm:p-6 space-y-4">
           <div className="p-3.5 rounded-xl bg-[#FAF9F5] border border-[#E8E6DF]">
             <div className="text-[11px] font-medium text-zinc-500">
-              Nome inserido na escala:
+              Nome encontrado{current.incomingRole ? ` (${current.incomingRole})` : ""}:
             </div>
             <div className="text-base font-semibold text-zinc-900 mt-0.5">
               {current.incomingName}
@@ -87,66 +131,128 @@ export function ContactMatchModal({
             )}
           </div>
 
-          <p className="text-xs text-zinc-600 leading-relaxed">
-            Esse voluntário é a <strong>mesma pessoa</strong> que algum dos
-            contatos abaixo ou são <strong>pessoas distintas</strong>? Ao
-            vincular, o WhatsApp fica salvo automaticamente para ambos.
-          </p>
+          {!isNamingDistinct ? (
+            <>
+              <p className="text-xs text-zinc-600 leading-relaxed">
+                Esse voluntário é a <strong>mesma pessoa</strong> que{" "}
+                {current.candidates.length > 1 ? "algum dos contatos" : "o contato"} abaixo ou são{" "}
+                <strong>pessoas distintas</strong>?
+              </p>
 
-          <div className="space-y-2.5">
-            {current.candidates.map((candidate) => (
-              <div
-                key={candidate.key}
-                className="p-3.5 rounded-xl border border-[#E8E6DF] bg-white space-y-3"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-zinc-900 truncate">
-                      {candidate.displayName}
+              <div className="space-y-2.5">
+                {current.candidates.map((candidate) => (
+                  <div
+                    key={candidate.key}
+                    className="p-3.5 rounded-xl border border-[#E8E6DF] bg-white space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-zinc-900 truncate">
+                          {candidate.displayName}
+                        </div>
+                        <div className="inline-flex items-center gap-1.5 text-xs font-mono-tabular text-zinc-600 mt-0.5">
+                          <Phone className="w-3 h-3 text-zinc-400" />
+                          <span>
+                            {candidate.phone
+                              ? formatPhoneDisplay(candidate.phone)
+                              : "Sem WhatsApp salvo ainda"}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="inline-flex items-center gap-1.5 text-xs font-mono-tabular text-zinc-600 mt-0.5">
-                      <Phone className="w-3 h-3 text-zinc-400" />
+
+                    <button
+                      type="button"
+                      onClick={() => onResolveSame(current, candidate)}
+                      className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-medium bg-emerald-700 text-white hover:bg-emerald-800 rounded-lg transition-colors cursor-pointer"
+                    >
+                      <UserCheck className="w-4 h-4 shrink-0" />
                       <span>
-                        {candidate.phone
-                          ? formatPhoneDisplay(candidate.phone)
-                          : "Sem WhatsApp salvo ainda"}
+                        Sim, é a mesma pessoa ({candidate.displayName})
                       </span>
-                    </div>
+                    </button>
                   </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => onResolveSame(current, candidate)}
-                  className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-medium bg-emerald-700 text-white hover:bg-emerald-800 rounded-lg transition-colors cursor-pointer"
-                >
-                  <UserCheck className="w-4 h-4 shrink-0" />
-                  <span>
-                    Sim, é a mesma pessoa ({candidate.displayName})
-                  </span>
-                </button>
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          ) : (
+            <form
+              id="distinct-person-form"
+              onSubmit={handleConfirmDistinctForm}
+              className="p-4 rounded-xl border border-[#E8E6DF] bg-[#FAF9F5] space-y-3"
+            >
+              <div className="text-xs font-medium text-zinc-800">
+                Como deseja identificar esta outra pessoa na lista de voluntários?
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-zinc-600 mb-1">
+                  Nome com sobrenome ou função
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={distinctName}
+                  onChange={(e) => setDistinctName(e.target.value)}
+                  placeholder="Ex: Samuel Rebouças"
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#E8E6DF] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-zinc-600 mb-1">
+                  WhatsApp (opcional)
+                </label>
+                <input
+                  type="tel"
+                  value={distinctPhone}
+                  onChange={(e) => setDistinctPhone(e.target.value)}
+                  placeholder="(11) 99999-9999"
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#E8E6DF] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700 font-mono-tabular"
+                />
+              </div>
+            </form>
+          )}
         </div>
 
         <div className="shrink-0 px-5 sm:px-6 py-3.5 border-t border-[#EFECE4] bg-[#FAF9F5] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
-          <button
-            type="button"
-            onClick={() => onResolveDistinct(current)}
-            className="min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-medium border border-[#E8E6DF] text-zinc-800 bg-white hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
-          >
-            <UserPlus className="w-4 h-4 shrink-0 text-zinc-600" />
-            <span>Não, são pessoas distintas</span>
-          </button>
+          {!isNamingDistinct ? (
+            <>
+              <button
+                type="button"
+                onClick={handleClickDistinct}
+                className="min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-medium border border-[#E8E6DF] text-zinc-800 bg-white hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4 shrink-0 text-zinc-600" />
+                <span>Não, são pessoas distintas</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => onSkip(current)}
-            className="min-h-[44px] px-3 py-2 text-xs font-medium text-zinc-500 hover:text-zinc-900 rounded-lg cursor-pointer"
-          >
-            Decidir depois
-          </button>
+              <button
+                type="button"
+                onClick={() => onSkip(current)}
+                className="min-h-[44px] px-3 py-2 text-xs font-medium text-zinc-500 hover:text-zinc-900 rounded-lg cursor-pointer"
+              >
+                Decidir depois
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => setIsNamingDistinct(false)}
+                className="min-h-[44px] px-4 py-2 text-xs font-medium text-zinc-600 hover:text-zinc-900 rounded-lg cursor-pointer"
+              >
+                Voltar
+              </button>
+              <button
+                type="submit"
+                form="distinct-person-form"
+                className="min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-medium bg-zinc-900 text-white hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4 shrink-0" />
+                <span>Salvar como outra pessoa</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
