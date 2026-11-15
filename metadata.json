@@ -1,0 +1,6 @@
+{
+  "name": "Escala Kids",
+  "description": "Confirmação rápida de escalas de domingo e disparo de mensagens no WhatsApp para o Ministério Infantil.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
