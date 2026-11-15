@@ -3,6 +3,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,6 +64,51 @@ function getGeminiClient(): GoogleGenAI | null {
       },
     },
   });
+}
+
+function getSupabaseConfig() {
+  const url = (
+    process.env.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    ""
+  ).trim();
+  const anonKey = (
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    ""
+  ).trim();
+  const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  const activeKey = serviceRoleKey || anonKey;
+  return {
+    configured: Boolean(url && activeKey),
+    url,
+    anonKey,
+    serviceRoleKey,
+    activeKey,
+  };
+}
+
+function createSupabaseServerClient(): SupabaseClient | null {
+  const cfg = getSupabaseConfig();
+  if (!cfg.configured) return null;
+  return createClient(cfg.url, cfg.activeKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
+function isMissingTableError(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  const msg = (err.message || "").toLowerCase();
+  return (
+    err.code === "42P01" ||
+    err.code === "PGRST205" ||
+    msg.includes("does not exist") ||
+    msg.includes("could not find the table")
+  );
 }
 
 async function startServer() {
@@ -209,6 +255,260 @@ Regras importantes:
       return res.status(500).json({
         error: `Não foi possível interpretar a imagem da escala: ${message}`,
       });
+    }
+  });
+
+  // Supabase Shared Cloud Sync Routes (sem autenticação)
+  app.get("/api/cloud/state", async (_req, res) => {
+    try {
+      const cfg = getSupabaseConfig();
+      if (!cfg.configured) {
+        return res.json({ configured: false });
+      }
+      const db = createSupabaseServerClient();
+      if (!db) {
+        return res.json({ configured: false });
+      }
+
+      const [entriesRes, contactsRes, templatesRes] = await Promise.all([
+        db
+          .from("escala_entries")
+          .select(
+            "id, date, shift, group_id, volunteer_name, phone, status, message_sent"
+          ),
+        db.from("escala_contacts").select("name_key, phone"),
+        db
+          .from("escala_templates")
+          .select("default_noite, default_manha, group_overrides")
+          .eq("id", "default")
+          .maybeSingle(),
+      ]);
+
+      const firstErr =
+        entriesRes.error || contactsRes.error || templatesRes.error;
+      if (firstErr) {
+        if (isMissingTableError(firstErr)) {
+          return res.status(400).json({
+            configured: true,
+            needsSchemaSetup: true,
+            error:
+              "As tabelas ainda não foram criadas no Supabase. Execute o script supabase/schema.sql no SQL Editor do seu projeto.",
+          });
+        }
+        return res.status(500).json({ configured: true, error: firstErr.message });
+      }
+
+      const entries = (entriesRes.data || []).map((row) => ({
+        id: row.id,
+        date: row.date,
+        shift: row.shift,
+        groupId: row.group_id,
+        volunteerName: row.volunteer_name,
+        phone: row.phone || "",
+        status: row.status || "pendente",
+        messageSent: Boolean(row.message_sent),
+      }));
+
+      const contactBook: Record<string, string> = {};
+      for (const row of contactsRes.data || []) {
+        if (row.name_key && row.phone) {
+          contactBook[row.name_key] = row.phone;
+        }
+      }
+
+      const templates = templatesRes.data
+        ? {
+            defaultNoite: templatesRes.data.default_noite,
+            defaultManha: templatesRes.data.default_manha,
+            groupOverrides: templatesRes.data.group_overrides || {},
+          }
+        : null;
+
+      return res.json({ configured: true, entries, contactBook, templates });
+    } catch (err) {
+      console.error("Erro ao carregar dados do Supabase:", err);
+      return res
+        .status(500)
+        .json({ configured: true, error: "Erro ao sincronizar leitura com o Supabase." });
+    }
+  });
+
+  app.put("/api/cloud/state", async (req, res) => {
+    try {
+      const cfg = getSupabaseConfig();
+      if (!cfg.configured) {
+        return res.status(503).json({
+          configured: false,
+          error: "Supabase não configurado em Settings > Secrets.",
+        });
+      }
+      const db = createSupabaseServerClient();
+      if (!db) {
+        return res.status(503).json({ error: "Banco indisponível." });
+      }
+
+      const { entries, contactBook, templates } = req.body as {
+        entries?: Array<{
+          id: string;
+          date: string;
+          shift: "manha" | "noite";
+          groupId: string;
+          volunteerName: string;
+          phone: string;
+          status: "pendente" | "confirmado" | "recusado";
+          messageSent: boolean;
+        }>;
+        contactBook?: Record<string, string>;
+        templates?: {
+          defaultNoite: string;
+          defaultManha: string;
+          groupOverrides: Record<string, string>;
+        };
+      };
+
+      const nowIso = new Date().toISOString();
+
+      if (Array.isArray(entries)) {
+        const entryRows = entries.map((e) => ({
+          id: e.id,
+          date: e.date,
+          shift: e.shift,
+          group_id: e.groupId,
+          volunteer_name: e.volunteerName,
+          phone: e.phone || "",
+          status: e.status || "pendente",
+          message_sent: Boolean(e.messageSent),
+          updated_at: nowIso,
+        }));
+
+        if (entryRows.length > 0) {
+          const { error: upsertErr } = await db
+            .from("escala_entries")
+            .upsert(entryRows, { onConflict: "id" });
+          if (upsertErr) {
+            if (isMissingTableError(upsertErr)) {
+              return res.status(400).json({
+                needsSchemaSetup: true,
+                error:
+                  "As tabelas ainda não foram criadas no Supabase. Execute o script supabase/schema.sql no SQL Editor.",
+              });
+            }
+            return res.status(500).json({ error: upsertErr.message });
+          }
+        }
+
+        const { data: existingRows, error: existingErr } = await db
+          .from("escala_entries")
+          .select("id");
+        if (existingErr) {
+          if (isMissingTableError(existingErr)) {
+            return res.status(400).json({
+              needsSchemaSetup: true,
+              error:
+                "As tabelas ainda não foram criadas no Supabase. Execute o script supabase/schema.sql no SQL Editor.",
+            });
+          }
+          return res.status(500).json({ error: existingErr.message });
+        }
+
+        const incomingIds = new Set(entryRows.map((r) => r.id));
+        const toDeleteIds = (existingRows || [])
+          .map((r) => r.id as string)
+          .filter((id) => !incomingIds.has(id));
+        if (toDeleteIds.length > 0) {
+          const { error: delErr } = await db
+            .from("escala_entries")
+            .delete()
+            .in("id", toDeleteIds);
+          if (delErr) {
+            return res.status(500).json({ error: delErr.message });
+          }
+        }
+      }
+
+      if (contactBook && typeof contactBook === "object") {
+        const contactRows = Object.entries(contactBook)
+          .filter(([k, v]) => k.trim() && typeof v === "string" && v.trim())
+          .map(([k, v]) => ({
+            name_key: k.trim().toLowerCase(),
+            volunteer_name: k.trim(),
+            phone: v.trim(),
+            updated_at: nowIso,
+          }));
+
+        if (contactRows.length > 0) {
+          const { error: cUpsertErr } = await db
+            .from("escala_contacts")
+            .upsert(contactRows, { onConflict: "name_key" });
+          if (cUpsertErr) {
+            if (isMissingTableError(cUpsertErr)) {
+              return res.status(400).json({
+                needsSchemaSetup: true,
+                error:
+                  "As tabelas ainda não foram criadas no Supabase. Execute o script supabase/schema.sql no SQL Editor.",
+              });
+            }
+            return res.status(500).json({ error: cUpsertErr.message });
+          }
+        }
+
+        const { data: existingContacts, error: cSelectErr } = await db
+          .from("escala_contacts")
+          .select("name_key");
+        if (cSelectErr) {
+          if (isMissingTableError(cSelectErr)) {
+            return res.status(400).json({
+              needsSchemaSetup: true,
+              error:
+                "As tabelas ainda não foram criadas no Supabase. Execute o script supabase/schema.sql no SQL Editor.",
+            });
+          }
+          return res.status(500).json({ error: cSelectErr.message });
+        }
+        const incomingKeys = new Set(contactRows.map((c) => c.name_key));
+        const keysToDelete = (existingContacts || [])
+          .map((c) => c.name_key as string)
+          .filter((k) => !incomingKeys.has(k));
+        if (keysToDelete.length > 0) {
+          const { error: cDelErr } = await db
+            .from("escala_contacts")
+            .delete()
+            .in("name_key", keysToDelete);
+          if (cDelErr) {
+            return res.status(500).json({ error: cDelErr.message });
+          }
+        }
+      }
+
+      if (templates) {
+        const { error: tErr } = await db.from("escala_templates").upsert(
+          {
+            id: "default",
+            default_noite: templates.defaultNoite,
+            default_manha: templates.defaultManha,
+            group_overrides: templates.groupOverrides || {},
+            updated_at: nowIso,
+          },
+          { onConflict: "id" }
+        );
+        if (tErr) {
+          if (isMissingTableError(tErr)) {
+            return res.status(400).json({
+              needsSchemaSetup: true,
+              error:
+                "As tabelas ainda não foram criadas no Supabase. Execute o script supabase/schema.sql no SQL Editor.",
+            });
+          }
+          return res.status(500).json({ error: tErr.message });
+        }
+      }
+
+      return res.json({ ok: true, syncedAt: nowIso });
+    } catch (err) {
+      console.error("Erro ao salvar dados no Supabase:", err);
+      return res
+        .status(500)
+        .json({ error: "Erro ao salvar alterações no Supabase." });
     }
   });
 

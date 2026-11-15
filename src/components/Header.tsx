@@ -1,4 +1,11 @@
-import { Send, Plus, CalendarCheck, MessageSquareText, ImageUp } from "lucide-react";
+import {
+  Send,
+  Plus,
+  CalendarCheck,
+  MessageSquareText,
+  ImageUp,
+  RefreshCw,
+} from "lucide-react";
 import type { AppView } from "../types/schedule";
 
 interface HeaderProps {
@@ -8,6 +15,7 @@ interface HeaderProps {
   canDispatch: boolean;
   onOpenBatchModal: () => void;
   onOpenQuickAdd: () => void;
+  onOpenSyncModal: () => void;
 }
 
 export function Header({
@@ -17,6 +25,7 @@ export function Header({
   canDispatch,
   onOpenBatchModal,
   onOpenQuickAdd,
+  onOpenSyncModal,
 }: HeaderProps) {
   const navItems: {
     id: AppView;
@@ -47,7 +56,7 @@ export function Header({
   return (
     <>
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-[#E8E6DF]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 md:h-16 flex items-center justify-between gap-4 md:gap-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 md:h-16 flex items-center justify-between gap-3 md:gap-8">
           <button
             type="button"
             onClick={() => onChangeView("escala")}
@@ -86,8 +95,18 @@ export function Header({
             })}
           </nav>
 
-          {/* Primary Action */}
-          <div className="flex items-center shrink-0">
+          {/* Actions: Sync + Primary Action */}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenSyncModal}
+              title="Sincronização Supabase"
+              className="h-9 min-w-[40px] inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 text-xs font-medium border border-[#E8E6DF] text-zinc-700 bg-white hover:bg-[#FAF9F5] rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+            >
+              <RefreshCw className="w-3.5 h-3.5 shrink-0 text-zinc-600" />
+              <span className="hidden sm:inline">Sincronizar</span>
+            </button>
+
             {selectedCount > 0 ? (
               <button
                 type="button"

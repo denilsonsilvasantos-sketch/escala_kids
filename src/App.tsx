@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Header } from "./components/Header";
 import { ScheduleWorkspace } from "./components/ScheduleWorkspace";
 import { TemplatesView } from "./components/TemplatesView";
 import { ImageImporterView } from "./components/ImageImporterView";
 import { BatchQueueModal } from "./components/BatchQueueModal";
 import { QuickAddModal } from "./components/QuickAddModal";
+import { CloudSyncModal } from "./components/CloudSyncModal";
 import {
   DEFAULT_TEMPLATES,
   EXTRA_IMAGE_ENTRIES_15_11,
@@ -135,6 +136,21 @@ export default function App() {
     groupId?: string;
   }>({ isOpen: false, shift: "noite" });
 
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [supabaseConfigured, setSupabaseConfigured] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [needsSchemaSetup, setNeedsSchemaSetup] = useState(false);
+
+  const skipNextCloudPushRef = useRef(false);
+  const hasHydratedCloudRef = useRef(false);
+  const entriesRef = useRef(entries);
+  const templatesRef = useRef(templates);
+  const contactBookRef = useRef(contactBook);
+  entriesRef.current = entries;
+  templatesRef.current = templates;
+  contactBookRef.current = contactBook;
+
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_ENTRIES_KEY, JSON.stringify(entries));
@@ -158,6 +174,143 @@ export default function App() {
       // Ignore storage quota errors
     }
   }, [contactBook]);
+
+  const pushStateToCloud = useCallback(
+    async (payload: {
+      entries: ScheduleEntry[];
+      contactBook: Record<string, string>;
+      templates: MessageTemplatesState;
+    }) => {
+      const res = await fetch("/api/cloud/state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.needsSchemaSetup) setNeedsSchemaSetup(true);
+        throw new Error(data.error || "Erro ao salvar na nuvem.");
+      }
+      setNeedsSchemaSetup(false);
+      setSyncError(null);
+    },
+    []
+  );
+
+  const pullStateFromCloud = useCallback(
+    async (seedIfEmpty: boolean) => {
+      setIsSyncing(true);
+      setSyncError(null);
+      try {
+        const res = await fetch("/api/cloud/state");
+        const data = await res.json();
+        setSupabaseConfigured(Boolean(data.configured));
+
+        if (!data.configured) {
+          return;
+        }
+
+        if (!res.ok) {
+          if (data.needsSchemaSetup) setNeedsSchemaSetup(true);
+          throw new Error(data.error || "Erro ao carregar dados da nuvem.");
+        }
+        setNeedsSchemaSetup(false);
+
+        const cloudEntries = Array.isArray(data.entries)
+          ? (data.entries as RawStoredEntry[]).map(normalizeEntry)
+          : [];
+        const cloudContacts =
+          data.contactBook && typeof data.contactBook === "object"
+            ? (data.contactBook as Record<string, string>)
+            : {};
+        const cloudTemplates = data.templates as MessageTemplatesState | null;
+
+        if (cloudEntries.length === 0 && !cloudTemplates && seedIfEmpty) {
+          await pushStateToCloud({
+            entries: entriesRef.current,
+            contactBook: contactBookRef.current,
+            templates: templatesRef.current,
+          });
+          hasHydratedCloudRef.current = true;
+          return;
+        }
+
+        skipNextCloudPushRef.current = true;
+        hasHydratedCloudRef.current = true;
+        setEntries(cloudEntries);
+        setContactBook((prev) => ({ ...prev, ...cloudContacts }));
+        if (cloudTemplates) {
+          setTemplates({
+            defaultNoite: upgradeTemplateGreeting(cloudTemplates.defaultNoite),
+            defaultManha: upgradeTemplateGreeting(cloudTemplates.defaultManha),
+            groupOverrides: Object.fromEntries(
+              Object.entries(cloudTemplates.groupOverrides || {}).map(
+                ([k, v]) => [k, upgradeTemplateGreeting(v)]
+              )
+            ),
+          });
+        }
+      } catch (err) {
+        setSyncError(
+          err instanceof Error
+            ? err.message
+            : "Erro ao sincronizar com o Supabase."
+        );
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [pushStateToCloud]
+  );
+
+  // Pull shared cloud data automatically on initial load (no login needed)
+  useEffect(() => {
+    void pullStateFromCloud(true);
+  }, [pullStateFromCloud]);
+
+  // Debounced auto-push whenever local state changes while Supabase is active
+  useEffect(() => {
+    if (!supabaseConfigured || !hasHydratedCloudRef.current) {
+      return;
+    }
+    if (skipNextCloudPushRef.current) {
+      skipNextCloudPushRef.current = false;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void pushStateToCloud({
+        entries,
+        contactBook,
+        templates,
+      }).catch((err) => {
+        setSyncError(
+          err instanceof Error
+            ? err.message
+            : "Erro ao salvar alterações na nuvem."
+        );
+      });
+    }, 600);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    entries,
+    contactBook,
+    templates,
+    supabaseConfigured,
+    pushStateToCloud,
+  ]);
+
+  // Refresh from cloud when returning to the app on another device/tab
+  useEffect(() => {
+    if (!supabaseConfigured) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void pullStateFromCloud(false);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [supabaseConfigured, pullStateFromCloud]);
 
   const groupsById: Record<string, GroupDefinition> = useMemo(
     () => Object.fromEntries(SCHEDULE_GROUPS.map((g) => [g.id, g])),
@@ -356,6 +509,12 @@ export default function App() {
         onOpenQuickAdd={() =>
           setQuickAddState({ isOpen: true, shift: "noite" })
         }
+        onOpenSyncModal={() => {
+          setIsSyncModalOpen(true);
+          if (supabaseConfigured) {
+            void pullStateFromCloud(false);
+          }
+        }}
       />
 
       <main className="flex-1 pb-20 md:pb-6">
@@ -429,6 +588,16 @@ export default function App() {
         initialGroupId={quickAddState.groupId}
         contactBook={contactBook}
         onAddEntry={handleAddEntry}
+      />
+
+      <CloudSyncModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        supabaseConfigured={supabaseConfigured}
+        isSyncing={isSyncing}
+        syncError={syncError}
+        needsSchemaSetup={needsSchemaSetup}
+        onRefreshFromCloud={() => pullStateFromCloud(false)}
       />
     </div>
   );
