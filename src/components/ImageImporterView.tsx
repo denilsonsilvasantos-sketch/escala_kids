@@ -18,7 +18,7 @@ import {
   formatPhoneDisplay,
   getUpcomingSundays,
 } from "../utils/dateAndMessage";
-import { lookupPhoneInBook } from "../utils/contacts";
+import { formatVolunteerName, lookupPhoneInBook } from "../utils/contacts";
 import { compressImageForUpload, readFileAsDataUrl } from "../utils/imageUpload";
 
 interface ParsedAssignment {
@@ -119,7 +119,10 @@ export function ImageImporterView({
       }
 
       setDetectedColumns(data.detectedDateColumns || []);
-      const assignments = data.assignments || [];
+      const assignments = (data.assignments || []).map((a) => ({
+        ...a,
+        volunteerName: formatVolunteerName(a.volunteerName),
+      }));
       setExtractedAssignments(assignments);
       if (assignments.length === 0) {
         setErrorMsg(
@@ -204,7 +207,10 @@ export function ImageImporterView({
     onApplyImportedEntries({
       sundayISO: targetSundayISO,
       shift,
-      assignments: extractedAssignments,
+      assignments: extractedAssignments.map((item) => ({
+        ...item,
+        volunteerName: formatVolunteerName(item.volunteerName),
+      })),
       replaceExistingForShiftDate: replaceExisting,
     });
   };
@@ -467,6 +473,20 @@ export function ImageImporterView({
                           setExtractedAssignments((prev) =>
                             prev.map((row, rIdx) =>
                               rIdx === idx ? { ...row, volunteerName: val } : row
+                            )
+                          );
+                        }}
+                        onBlur={() => {
+                          setExtractedAssignments((prev) =>
+                            prev.map((row, rIdx) =>
+                              rIdx === idx
+                                ? {
+                                    ...row,
+                                    volunteerName: formatVolunteerName(
+                                      row.volunteerName
+                                    ),
+                                  }
+                                : row
                             )
                           );
                         }}

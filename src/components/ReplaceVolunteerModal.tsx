@@ -6,7 +6,7 @@ import type {
   ScheduleEntry,
 } from "../types/schedule";
 import { formatDateDDMM } from "../utils/dateAndMessage";
-import { lookupPhoneInBook } from "../utils/contacts";
+import { formatVolunteerName, lookupPhoneInBook } from "../utils/contacts";
 
 interface ReplaceVolunteerModalProps {
   entry: ScheduleEntry | null;
@@ -61,8 +61,9 @@ export function ReplaceVolunteerModal({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!newName.trim()) return;
-    onConfirmReplace(entry.id, newName.trim(), newPhone.trim());
+    const formattedName = formatVolunteerName(newName);
+    if (!formattedName) return;
+    onConfirmReplace(entry.id, formattedName, newPhone.trim());
     setNewName("");
     setNewPhone("");
     onClose();
@@ -122,6 +123,7 @@ export function ReplaceVolunteerModal({
                 required
                 value={newName}
                 onChange={(e) => handlePickName(e.target.value)}
+                onBlur={() => setNewName((v) => formatVolunteerName(v))}
                 placeholder="Digite o nome do substituto..."
                 className="w-full px-3 py-2.5 text-sm border border-[#E8E6DF] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
               />

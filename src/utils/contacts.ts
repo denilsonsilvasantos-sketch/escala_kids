@@ -6,6 +6,36 @@ import type {
 } from "../types/schedule";
 
 const STOP_WORDS = new Set(["de", "da", "do", "dos", "das"]);
+const LOWERCASE_NAME_CONNECTORS = new Set([
+  "e",
+  "de",
+  "da",
+  "do",
+  "dos",
+  "das",
+  "di",
+  "del",
+]);
+
+export function formatVolunteerName(name: string): string {
+  const collapsed = name.trim().replace(/\s+/g, " ");
+  if (!collapsed) return "";
+
+  return collapsed
+    .split(" ")
+    .map((word, index) => {
+      const lower = word.toLocaleLowerCase("pt-BR");
+      if (index > 0 && LOWERCASE_NAME_CONNECTORS.has(lower)) {
+        return lower;
+      }
+      return lower.replace(
+        /(^|[-(/])(\p{L})/gu,
+        (_match, prefix: string, ch: string) =>
+          `${prefix}${ch.toLocaleUpperCase("pt-BR")}`
+      );
+    })
+    .join(" ");
+}
 
 export function normalizeNameKey(name: string): string {
   return name
@@ -155,15 +185,17 @@ export function normalizeContactBookKeys(
       nextBook[norm] = phone;
     }
     const candidateDisplay = names?.[rawKey] || names?.[norm] || rawKey;
-    if (candidateDisplay.trim() && !nextNames[norm]) {
-      nextNames[norm] = candidateDisplay.trim();
+    const formatted = formatVolunteerName(candidateDisplay);
+    if (formatted && !nextNames[norm]) {
+      nextNames[norm] = formatted;
     }
   }
 
   for (const [rawKey, display] of Object.entries(names || {})) {
     const norm = normalizeNameKey(rawKey);
-    if (norm && display.trim()) {
-      nextNames[norm] = display.trim();
+    const formatted = formatVolunteerName(display);
+    if (norm && formatted) {
+      nextNames[norm] = formatted;
     }
   }
 
@@ -232,9 +264,10 @@ export function buildKnownDirectory(params: {
 
   for (const [rawKey, display] of Object.entries(params.contactNames)) {
     const key = normalizeNameKey(rawKey);
-    if (!key || !display.trim()) continue;
+    const formatted = formatVolunteerName(display);
+    if (!key || !formatted) continue;
     directory.set(key, {
-      displayName: display.trim(),
+      displayName: formatted,
       phone: (params.contactBook[key] || params.contactBook[rawKey] || "").trim(),
     });
   }
@@ -243,19 +276,20 @@ export function buildKnownDirectory(params: {
     const key = normalizeNameKey(rawKey);
     if (!key) continue;
     const existing = directory.get(key);
-    const displayName =
+    const displayName = formatVolunteerName(
       existing?.displayName ||
-      params.contactNames[key] ||
-      params.contactNames[rawKey] ||
-      rawKey;
+        params.contactNames[key] ||
+        params.contactNames[rawKey] ||
+        rawKey
+    );
     directory.set(key, {
-      displayName: displayName.trim(),
+      displayName,
       phone: rawPhone.trim() || existing?.phone || "",
     });
   }
 
   for (const entry of params.entries) {
-    const rawName = entry.volunteerName.trim();
+    const rawName = formatVolunteerName(entry.volunteerName);
     const key = normalizeNameKey(rawName);
     if (!key) continue;
     const existing = directory.get(key);
@@ -290,7 +324,7 @@ export function findPendingMatchForName(params: {
   contactLinks: ContactLink[];
   excludeEntryId?: string;
 }): PendingContactMatch | null {
-  const cleanName = params.incomingName.trim();
+  const cleanName = formatVolunteerName(params.incomingName);
   const incomingKey = normalizeNameKey(cleanName);
   if (!incomingKey) return null;
 

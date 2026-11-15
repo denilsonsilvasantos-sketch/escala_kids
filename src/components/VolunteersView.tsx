@@ -18,6 +18,7 @@ import type {
 } from "../types/schedule";
 import {
   buildKnownDirectory,
+  formatVolunteerName,
   getSamePersonKeys,
   isSelfConfirmedSame,
   normalizeNameKey,
@@ -142,8 +143,9 @@ export function VolunteersView({
 
   const handleManualAdd = (e: FormEvent) => {
     e.preventDefault();
-    if (!newName.trim()) return;
-    onAddVolunteer(newName.trim(), newPhone.trim());
+    const formatted = formatVolunteerName(newName);
+    if (!formatted) return;
+    onAddVolunteer(formatted, newPhone.trim());
     setNewName("");
     setNewPhone("");
   };
@@ -210,7 +212,13 @@ export function VolunteersView({
         if (list.length === 0) {
           setExtractError("Nenhum nome de voluntário foi identificado nesta imagem.");
         } else {
-          setExtractedItems(list.map((v) => ({ ...v, selected: true })));
+          setExtractedItems(
+            list.map((v) => ({
+              ...v,
+              name: formatVolunteerName(v.name),
+              selected: true,
+            }))
+          );
           window.setTimeout(() => {
             resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
           }, 100);
@@ -287,7 +295,10 @@ export function VolunteersView({
   const handleConfirmImport = () => {
     const selected = extractedItems
       .filter((i) => i.selected && i.name.trim())
-      .map(({ name, role }) => ({ name: name.trim(), role: role.trim() }));
+      .map(({ name, role }) => ({
+        name: formatVolunteerName(name),
+        role: role.trim(),
+      }));
     if (selected.length === 0) return;
 
     onImportExtractedVolunteers(selected);
@@ -363,6 +374,7 @@ export function VolunteersView({
                   required
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
+                  onBlur={() => setNewName((v) => formatVolunteerName(v))}
                   placeholder="Ex: Samuel Rebouças"
                   className="w-full px-3 py-2 text-sm border border-[#E8E6DF] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
                 />
@@ -519,6 +531,15 @@ export function VolunteersView({
                                 setExtractedItems((prev) =>
                                   prev.map((row, rIdx) =>
                                     rIdx === idx ? { ...row, name: val } : row
+                                  )
+                                );
+                              }}
+                              onBlur={() => {
+                                setExtractedItems((prev) =>
+                                  prev.map((row, rIdx) =>
+                                    rIdx === idx
+                                      ? { ...row, name: formatVolunteerName(row.name) }
+                                      : row
                                   )
                                 );
                               }}

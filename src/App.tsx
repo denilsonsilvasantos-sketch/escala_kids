@@ -30,6 +30,7 @@ import type {
 import { getConfirmationWindowInfo } from "./utils/dateAndMessage";
 import {
   findPendingMatchForName,
+  formatVolunteerName,
   getSamePersonKeys,
   hydrateEntriesWithSavedContacts,
   lookupPhoneInBook,
@@ -78,7 +79,7 @@ function normalizeEntry(raw: RawStoredEntry): ScheduleEntry {
     date: raw.date,
     shift: raw.shift,
     groupId: raw.groupId,
-    volunteerName: raw.volunteerName,
+    volunteerName: formatVolunteerName(raw.volunteerName || ""),
     phone: raw.phone || "",
     status: normalizedStatus,
     messageSent,
@@ -143,7 +144,10 @@ export default function App() {
     ).book
   );
   const [contactNames, setContactNames] = useState<Record<string, string>>(() =>
-    loadJson<Record<string, string>>(STORAGE_CONTACT_NAMES_KEY, {})
+    normalizeContactBookKeys(
+      loadJson<Record<string, string>>(STORAGE_CONTACTS_KEY, {}),
+      loadJson<Record<string, string>>(STORAGE_CONTACT_NAMES_KEY, {})
+    ).names
   );
   const [contactLinks, setContactLinks] = useState<ContactLink[]>(() =>
     loadJson<ContactLink[]>(STORAGE_CONTACT_LINKS_KEY, [])
@@ -338,9 +342,10 @@ export default function App() {
           ...normalizedCloud.names,
         };
         for (const e of cloudEntries) {
-          const key = normalizeNameKey(e.volunteerName);
+          const formatted = formatVolunteerName(e.volunteerName);
+          const key = normalizeNameKey(formatted);
           if (key) {
-            if (!mergedNames[key]) mergedNames[key] = e.volunteerName.trim();
+            if (!mergedNames[key]) mergedNames[key] = formatted;
             if (e.phone.trim() && !mergedBook[key]) {
               mergedBook[key] = e.phone.trim();
             }
@@ -509,7 +514,7 @@ export default function App() {
 
   const bindPhoneToPerson = useCallback(
     (volunteerName: string, rawPhone: string, editedEntryId?: string) => {
-      const cleanName = volunteerName.trim();
+      const cleanName = formatVolunteerName(volunteerName);
       const normKey = normalizeNameKey(cleanName);
       if (!normKey) return;
 
@@ -580,9 +585,14 @@ export default function App() {
   };
 
   const handleCommitName = (id: string, volunteerName: string) => {
-    const target = entriesRef.current.find((e) => e.id === id);
-    if (!volunteerName.trim()) return;
-    enqueueMatchCheck(volunteerName, target?.phone || "", entriesRef.current, id);
+    const formattedName = formatVolunteerName(volunteerName);
+    if (!formattedName) return;
+    const nextEntries = entriesRef.current.map((e) =>
+      e.id === id ? { ...e, volunteerName: formattedName } : e
+    );
+    setEntries(nextEntries);
+    const target = nextEntries.find((e) => e.id === id);
+    enqueueMatchCheck(formattedName, target?.phone || "", nextEntries, id);
   };
 
   const handleDeleteEntry = (id: string) => {
@@ -602,7 +612,7 @@ export default function App() {
     phone: string;
   }) => {
     const id = `entry-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const cleanName = newEntry.volunteerName.trim();
+    const cleanName = formatVolunteerName(newEntry.volunteerName);
     const normKey = normalizeNameKey(cleanName);
     const resolvedPhone =
       newEntry.phone.trim() ||
@@ -660,6 +670,7 @@ export default function App() {
         ...e,
         id: `clone-${Date.now()}-${idx}`,
         date: targetISO,
+        volunteerName: formatVolunteerName(e.volunteerName),
         phone: savedPhone || e.phone,
         status: "pendente",
         messageSent: false,
@@ -675,7 +686,7 @@ export default function App() {
     replaceExistingForShiftDate: boolean;
   }) => {
     const newItems: ScheduleEntry[] = params.assignments.map((item, idx) => {
-      const cleanName = item.volunteerName.trim();
+      const cleanName = formatVolunteerName(item.volunteerName);
       const savedPhone = lookupPhoneInBook(
         cleanName,
         contactBookRef.current,
@@ -738,7 +749,7 @@ export default function App() {
     newName: string,
     newPhone: string
   ) => {
-    const cleanName = newName.trim();
+    const cleanName = formatVolunteerName(newName);
     const normKey = normalizeNameKey(cleanName);
     const resolvedPhone =
       newPhone.trim() ||
@@ -849,7 +860,9 @@ export default function App() {
     pending: PendingContactMatch,
     distinctDetails?: { newDisplayName: string; newPhone: string }
   ) => {
-    const targetName = distinctDetails?.newDisplayName.trim() || pending.incomingName;
+    const targetName = formatVolunteerName(
+      distinctDetails?.newDisplayName || pending.incomingName
+    );
     const targetKey = normalizeNameKey(targetName);
     const targetPhone = distinctDetails?.newPhone.trim() || pending.incomingPhone;
 
@@ -919,7 +932,7 @@ export default function App() {
   };
 
   const handleAddVolunteerToDirectory = (name: string, phone: string) => {
-    const cleanName = name.trim();
+    const cleanName = formatVolunteerName(name);
     const normKey = normalizeNameKey(cleanName);
     if (!normKey) return;
 
@@ -974,7 +987,7 @@ export default function App() {
     const pendingList: PendingContactMatch[] = [];
 
     for (const item of items) {
-      const cleanName = item.name.trim();
+      const cleanName = formatVolunteerName(item.name);
       const key = normalizeNameKey(cleanName);
       if (!key) continue;
 

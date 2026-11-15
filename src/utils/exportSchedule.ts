@@ -8,6 +8,7 @@ import type {
   VolunteerStatus,
 } from "../types/schedule";
 import { formatDateDDMM, formatPhoneDisplay } from "./dateAndMessage";
+import { formatVolunteerName } from "./contacts";
 
 function getExportStatusLabel(entry: ScheduleEntry): string {
   if (entry.status === "confirmado") return "Confirmado";
@@ -81,7 +82,7 @@ function buildExportRows({
           culto: shiftLabel,
           categoria: catLabel,
           funcao: group.label,
-          voluntario: entry.volunteerName,
+          voluntario: formatVolunteerName(entry.volunteerName),
           whatsapp: entry.phone ? formatPhoneDisplay(entry.phone) : "",
           status: getExportStatusLabel(entry),
           rawStatus: entry.status,

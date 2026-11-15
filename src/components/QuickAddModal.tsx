@@ -7,7 +7,11 @@ import type {
 } from "../types/schedule";
 import { SCHEDULE_GROUPS } from "../data/initialData";
 import { formatDateDDMM, formatPhoneDisplay } from "../utils/dateAndMessage";
-import { lookupPhoneInBook, normalizeNameKey } from "../utils/contacts";
+import {
+  formatVolunteerName,
+  lookupPhoneInBook,
+  normalizeNameKey,
+} from "../utils/contacts";
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -80,7 +84,9 @@ export function QuickAddModal({
     for (const [key, savedPhone] of Object.entries(contactBook)) {
       const norm = normalizeNameKey(key);
       if (!norm || !savedPhone.trim() || seen.has(norm)) continue;
-      const display = contactNames[norm] || contactNames[key] || key;
+      const display = formatVolunteerName(
+        contactNames[norm] || contactNames[key] || key
+      );
       if (normalizeNameKey(display).includes(q) && normalizeNameKey(display) !== q) {
         seen.add(norm);
         results.push({ name: display, phone: savedPhone.trim() });
@@ -119,12 +125,13 @@ export function QuickAddModal({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!volunteerName.trim() || !groupId) return;
+    const formattedName = formatVolunteerName(volunteerName);
+    if (!formattedName || !groupId) return;
     onAddEntry({
       date: sundayISO,
       shift,
       groupId,
-      volunteerName: volunteerName.trim(),
+      volunteerName: formattedName,
       phone: phone.trim(),
     });
     setVolunteerName("");
@@ -233,6 +240,7 @@ export function QuickAddModal({
                 required
                 value={volunteerName}
                 onChange={(e) => handleNameChange(e.target.value)}
+                onBlur={() => setVolunteerName((v) => formatVolunteerName(v))}
                 placeholder="Ex: Amanda Saragoça"
                 className="w-full px-3 py-2.5 text-sm border border-[#E8E6DF] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
               />

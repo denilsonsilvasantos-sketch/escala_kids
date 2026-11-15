@@ -102,6 +102,36 @@ function isMissingTableError(err: { code?: string; message?: string } | null): b
   );
 }
 
+const LOWERCASE_NAME_CONNECTORS = new Set([
+  "e",
+  "de",
+  "da",
+  "do",
+  "dos",
+  "das",
+  "di",
+  "del",
+]);
+
+export function formatVolunteerNameServer(name: string): string {
+  const collapsed = name.trim().replace(/\s+/g, " ");
+  if (!collapsed) return "";
+  return collapsed
+    .split(" ")
+    .map((word, index) => {
+      const lower = word.toLocaleLowerCase("pt-BR");
+      if (index > 0 && LOWERCASE_NAME_CONNECTORS.has(lower)) {
+        return lower;
+      }
+      return lower.replace(
+        /(^|[-(/])(\p{L})/gu,
+        (_match, prefix: string, ch: string) =>
+          `${prefix}${ch.toLocaleUpperCase("pt-BR")}`
+      );
+    })
+    .join(" ");
+}
+
 export function normalizeNameKeyServer(name: string): string {
   return name
     .trim()
@@ -234,14 +264,19 @@ Regras importantes:
     const parsed = JSON.parse(rawText);
     const validSet = new Set(allowedGroupIds);
     const sanitizedAssignments = Array.isArray(parsed.assignments)
-      ? parsed.assignments.filter(
-          (item: { groupId?: string; volunteerName?: string }) =>
-            item &&
-            typeof item.groupId === "string" &&
-            validSet.has(item.groupId) &&
-            typeof item.volunteerName === "string" &&
-            item.volunteerName.trim().length > 0
-        )
+      ? parsed.assignments
+          .filter(
+            (item: { groupId?: string; volunteerName?: string }) =>
+              item &&
+              typeof item.groupId === "string" &&
+              validSet.has(item.groupId) &&
+              typeof item.volunteerName === "string" &&
+              item.volunteerName.trim().length > 0
+          )
+          .map((item: { groupId: string; volunteerName: string }) => ({
+            groupId: item.groupId,
+            volunteerName: formatVolunteerNameServer(item.volunteerName),
+          }))
       : [];
 
     return {
@@ -364,7 +399,7 @@ Regras importantes:
 
     for (const item of rawList) {
       if (!item || typeof item.name !== "string") continue;
-      const cleanName = item.name.trim().replace(/\s+/g, " ");
+      const cleanName = formatVolunteerNameServer(item.name);
       if (!cleanName || cleanName.length < 2) continue;
       const cleanRole =
         typeof item.role === "string" && item.role.trim()
@@ -451,7 +486,7 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
       date: row.date,
       shift: row.shift,
       groupId: row.group_id,
-      volunteerName: row.volunteer_name,
+      volunteerName: formatVolunteerNameServer(row.volunteer_name || ""),
       phone: row.phone || "",
       status: row.status || "pendente",
       messageSent: Boolean(row.message_sent),
@@ -466,7 +501,7 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
         contactBook[normKey] = row.phone;
       }
       if (row.volunteer_name) {
-        contactNames[normKey] = row.volunteer_name;
+        contactNames[normKey] = formatVolunteerNameServer(row.volunteer_name);
       }
     }
 
@@ -474,8 +509,8 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
       id: row.id,
       nameKeyA: row.name_key_a,
       nameKeyB: row.name_key_b,
-      displayNameA: row.display_name_a || row.name_key_a,
-      displayNameB: row.display_name_b || row.name_key_b,
+      displayNameA: formatVolunteerNameServer(row.display_name_a || row.name_key_a),
+      displayNameB: formatVolunteerNameServer(row.display_name_b || row.name_key_b),
       relation: row.relation === "same" ? "same" : "distinct",
     }));
 
@@ -564,7 +599,7 @@ export async function handleCloudStatePut(rawBody: unknown): Promise<HandlerResu
         date: e.date,
         shift: e.shift,
         group_id: e.groupId,
-        volunteer_name: e.volunteerName,
+        volunteer_name: formatVolunteerNameServer(e.volunteerName),
         phone: e.phone || "",
         status: e.status || "pendente",
         message_sent: Boolean(e.messageSent),
@@ -640,10 +675,11 @@ export async function handleCloudStatePut(rawBody: unknown): Promise<HandlerResu
         if (!normKey) continue;
         const rawPhone = contactBook?.[normKey] ?? contactBook?.[k] ?? "";
         const phone = typeof rawPhone === "string" ? rawPhone.trim() : "";
-        const displayName =
+        const displayName = formatVolunteerNameServer(
           contactNames?.[normKey]?.trim() ||
-          contactNames?.[k]?.trim() ||
-          k.trim();
+            contactNames?.[k]?.trim() ||
+            k.trim()
+        );
         const prev = dedupContacts.get(normKey);
         dedupContacts.set(normKey, {
           name_key: normKey,

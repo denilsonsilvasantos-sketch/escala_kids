@@ -49,6 +49,7 @@ import {
 } from "../utils/exportSchedule";
 import { WhatsAppPreviewCard } from "./WhatsAppPreviewCard";
 import { ReplaceVolunteerModal } from "./ReplaceVolunteerModal";
+import { formatVolunteerName } from "../utils/contacts";
 
 interface ScheduleWorkspaceProps {
   sundayISO: string;
@@ -170,7 +171,8 @@ export function ScheduleWorkspace({
   const knownNames = useMemo(() => {
     const set = new Set<string>();
     for (const e of entries) {
-      if (e.volunteerName.trim()) set.add(e.volunteerName.trim());
+      const formatted = formatVolunteerName(e.volunteerName);
+      if (formatted) set.add(formatted);
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [entries]);

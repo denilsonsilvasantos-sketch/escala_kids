@@ -5,6 +5,7 @@ import type {
   PendingContactMatch,
 } from "../types/schedule";
 import { formatPhoneDisplay } from "../utils/dateAndMessage";
+import { formatVolunteerName } from "../utils/contacts";
 
 interface ContactMatchModalProps {
   pendingQueue: PendingContactMatch[];
@@ -67,7 +68,7 @@ export function ContactMatchModal({
 
   const handleConfirmDistinctForm = (e: FormEvent) => {
     e.preventDefault();
-    const cleanName = distinctName.trim();
+    const cleanName = formatVolunteerName(distinctName);
     if (!cleanName) return;
     onResolveDistinct(current, {
       newDisplayName: cleanName,
@@ -194,6 +195,7 @@ export function ContactMatchModal({
                   autoFocus
                   value={distinctName}
                   onChange={(e) => setDistinctName(e.target.value)}
+                  onBlur={() => setDistinctName((v) => formatVolunteerName(v))}
                   placeholder="Ex: Samuel Rebouças"
                   className="w-full px-3 py-2 text-sm bg-white border border-[#E8E6DF] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
                 />
