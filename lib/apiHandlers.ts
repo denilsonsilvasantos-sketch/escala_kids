@@ -17,6 +17,7 @@ export const GROUP_IDS_MANHA = [
   "manha-midia",
   "manha-seguranca",
   "manha-pastores",
+  "manha-coordenador",
 ];
 
 export const GROUP_IDS_NOITE = [
@@ -42,6 +43,7 @@ export const GROUP_IDS_NOITE = [
   "noite-midia",
   "noite-seguranca",
   "noite-pastores",
+  "noite-coordenador",
 ];
 
 function getGeminiClient(): GoogleGenAI | null {
@@ -192,11 +194,12 @@ Regras importantes:
 3. Para "PIPOCA", use "${targetShift}-pipoca", e para a linha "Auxiliar" logo abaixo de PIPOCA, use "${targetShift}-aux-pipoca".
 4. Para "SEGURANÇAS" / "Segurança", crie um item para cada nome listado na coluna daquela data usando o groupId "${targetShift}-seguranca".
 5. Para "MIDIA", use "${targetShift}-midia".
-6. Para "PASTORES", use "${targetShift}-pastores".
+6. Para "PASTORES" / "Pastor(a)", use "${targetShift}-pastores".
 7. Para "LOUVOR 3 a 6 anos", use "noite-louvor-3a6".
-8. Ignore linhas que não estão nos groupIds permitidos (como Coordenação).
-9. Se uma célula estiver vazia, não invente nomes; apenas omita ou não adicione item.
-10. Também liste todas as colunas de datas visíveis no cabeçalho da tabela (ex: ["1/nov", "8/nov", "15/nov", "22/nov", "29/nov"]).`;
+8. Para "COORDENAÇÃO" / "Coordenador(a)", use "${targetShift}-coordenador".
+9. Ignore linhas que não estão nos groupIds permitidos.
+10. Se uma célula estiver vazia, não invente nomes; apenas omita ou não adicione item.
+11. Também liste todas as colunas de datas visíveis no cabeçalho da tabela (ex: ["1/nov", "8/nov", "15/nov", "22/nov", "29/nov"]).`;
 
     const dataUrlMatch = imageBase64.match(/^data:([^;]+);base64,/);
     const resolvedMimeType =
@@ -337,7 +340,7 @@ export async function handleExtractVolunteers(rawBody: unknown): Promise<Handler
 
     const prompt = `Você é um extrator preciso de nomes de voluntários do Ministério Infantil (MEVAM Kids).
 Analise TODA a imagem enviada (todas as colunas de datas, todas as turmas, manhã e noite, ou lista de nomes).
-Extraia TODOS os nomes de voluntários encontrados na imagem, junto com a função/turma em que aparecem (ex: "Louvor 3 a 6 anos", "Professor(a) 5 anos", "Auxiliar 5 anos", "Refeitório", "Pipoca", "Segurança", "Mídia", "Pastores", "Coordenação", ou "Voluntário" se for uma lista simples sem função).
+Extraia TODOS os nomes de voluntários encontrados na imagem, junto com a função/turma em que aparecem (ex: "Louvor 3 a 6 anos", "Professor(a) 5 anos", "Auxiliar 5 anos", "Refeitório", "Pipoca", "Segurança", "Mídia", "Pastor(a)", "Coordenador(a)", ou "Voluntário" se for uma lista simples sem função).
 
 Regras importantes:
 1. Leia TODAS as colunas e TODAS as linhas da imagem, sem pular nenhum domingo ou turma.

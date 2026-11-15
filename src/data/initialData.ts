@@ -20,7 +20,8 @@ export const SCHEDULE_GROUPS: GroupDefinition[] = [
   { id: "manha-aux-pipoca", shift: "manha", label: "Auxiliar de Pipoca", category: "servicos", order: 12 },
   { id: "manha-midia", shift: "manha", label: "Mídia", category: "apoio", order: 13 },
   { id: "manha-seguranca", shift: "manha", label: "Segurança", category: "apoio", order: 14 },
-  { id: "manha-pastores", shift: "manha", label: "Pastores", category: "lideranca", order: 15 },
+  { id: "manha-pastores", shift: "manha", label: "Pastor(a)", category: "lideranca", order: 15 },
+  { id: "manha-coordenador", shift: "manha", label: "Coordenador(a)", category: "lideranca", order: 16 },
 
   // NOITE
   { id: "noite-louvor-3a6", shift: "noite", label: "Louvor 3 a 6 anos", category: "louvor", order: 1 },
@@ -44,7 +45,8 @@ export const SCHEDULE_GROUPS: GroupDefinition[] = [
   { id: "noite-aux-pipoca", shift: "noite", label: "Auxiliar de Pipoca", category: "servicos", order: 19 },
   { id: "noite-midia", shift: "noite", label: "Mídia", category: "apoio", order: 20 },
   { id: "noite-seguranca", shift: "noite", label: "Segurança", category: "apoio", order: 21 },
-  { id: "noite-pastores", shift: "noite", label: "Pastores", category: "lideranca", order: 22 },
+  { id: "noite-pastores", shift: "noite", label: "Pastor(a)", category: "lideranca", order: 22 },
+  { id: "noite-coordenador", shift: "noite", label: "Coordenador(a)", category: "lideranca", order: 23 },
 ];
 
 export const DEFAULT_TEMPLATES: MessageTemplatesState = {

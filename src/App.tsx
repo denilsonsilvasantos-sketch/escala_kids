@@ -979,6 +979,106 @@ export default function App() {
     );
   };
 
+  const handleRenameVolunteerInDirectory = (
+    oldPrimaryKey: string,
+    newName: string
+  ) => {
+    const formattedName = formatVolunteerName(newName);
+    const oldKey = normalizeNameKey(oldPrimaryKey);
+    const newKey = normalizeNameKey(formattedName);
+    if (!oldKey || !newKey || !formattedName) return;
+
+    if (oldKey === newKey) {
+      setContactNames((prev) => ({
+        ...prev,
+        [oldKey]: formattedName,
+      }));
+      setEntries((prev) =>
+        prev.map((e) =>
+          normalizeNameKey(e.volunteerName) === oldKey
+            ? { ...e, volunteerName: formattedName }
+            : e
+        )
+      );
+      setContactLinks((prev) =>
+        prev.map((l) => ({
+          ...l,
+          displayNameA:
+            normalizeNameKey(l.nameKeyA) === oldKey
+              ? formattedName
+              : l.displayNameA,
+          displayNameB:
+            normalizeNameKey(l.nameKeyB) === oldKey
+              ? formattedName
+              : l.displayNameB,
+        }))
+      );
+      return;
+    }
+
+    const existingPhone =
+      contactBookRef.current[newKey]?.trim() ||
+      contactBookRef.current[oldKey]?.trim() ||
+      "";
+
+    setContactNames((prev) => {
+      const next = { ...prev };
+      delete next[oldKey];
+      next[newKey] = formattedName;
+      return next;
+    });
+
+    setContactBook((prev) => {
+      const next = { ...prev };
+      const oldPhone = next[oldKey]?.trim() || "";
+      delete next[oldKey];
+      if (existingPhone || oldPhone) {
+        next[newKey] = next[newKey]?.trim() || existingPhone || oldPhone;
+      }
+      return next;
+    });
+
+    setEntries((prev) =>
+      prev.map((e) =>
+        normalizeNameKey(e.volunteerName) === oldKey
+          ? {
+              ...e,
+              volunteerName: formattedName,
+              phone: e.phone.trim() || existingPhone,
+            }
+          : e
+      )
+    );
+
+    setContactLinks((prev) => {
+      const updated: ContactLink[] = [];
+      const seenIds = new Set<string>();
+      for (const l of prev) {
+        const a =
+          normalizeNameKey(l.nameKeyA) === oldKey
+            ? newKey
+            : normalizeNameKey(l.nameKeyA);
+        const b =
+          normalizeNameKey(l.nameKeyB) === oldKey
+            ? newKey
+            : normalizeNameKey(l.nameKeyB);
+        if (a === b && l.relation === "distinct") continue;
+        const id = makeCanonicalPairId(a, b);
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+        updated.push({
+          ...l,
+          id,
+          nameKeyA: a,
+          nameKeyB: b,
+          displayNameA: a === newKey ? formattedName : l.displayNameA,
+          displayNameB: b === newKey ? formattedName : l.displayNameB,
+        });
+      }
+      return updated;
+    });
+  };
+
   const handleImportExtractedVolunteers = (
     items: ExtractedVolunteerOccurrence[]
   ) => {
@@ -1092,6 +1192,7 @@ export default function App() {
             contactLinks={contactLinks}
             onSavePersonPhone={(name, phone) => bindPhoneToPerson(name, phone)}
             onAddVolunteer={handleAddVolunteerToDirectory}
+            onRenameVolunteer={handleRenameVolunteerInDirectory}
             onDeleteVolunteer={handleDeleteVolunteerFromDirectory}
             onImportExtractedVolunteers={handleImportExtractedVolunteers}
             onRemoveLink={handleRemoveContactLink}

@@ -24,7 +24,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   auxiliar: "Auxiliares",
   servicos: "Refeitório & Pipoca",
   apoio: "Mídia & Segurança",
-  lideranca: "Pastores",
+  lideranca: "Pastor(a) & Coordenador(a)",
 };
 
 interface ExportParams {

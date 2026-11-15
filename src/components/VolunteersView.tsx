@@ -10,6 +10,9 @@ import {
   AlertCircle,
   CheckCircle2,
   Users,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import type {
   ContactLink,
@@ -33,6 +36,7 @@ interface VolunteersViewProps {
   contactLinks: ContactLink[];
   onSavePersonPhone: (name: string, phone: string) => void;
   onAddVolunteer: (name: string, phone: string) => void;
+  onRenameVolunteer: (oldPrimaryKey: string, newName: string) => void;
   onDeleteVolunteer: (primaryKey: string) => void;
   onImportExtractedVolunteers: (items: ExtractedVolunteerOccurrence[]) => void;
   onRemoveLink: (linkId: string) => void;
@@ -45,6 +49,7 @@ export function VolunteersView({
   contactLinks,
   onSavePersonPhone,
   onAddVolunteer,
+  onRenameVolunteer,
   onDeleteVolunteer,
   onImportExtractedVolunteers,
   onRemoveLink,
@@ -53,6 +58,8 @@ export function VolunteersView({
   const [newPhone, setNewPhone] = useState("");
   const [search, setSearch] = useState("");
   const [filterTab, setFilterTab] = useState<"todos" | "com-telefone" | "sem-telefone">("todos");
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editingNameDraft, setEditingNameDraft] = useState("");
 
   // Image extraction state
   const [imagePreview, setImagePreview] = useState("");
@@ -623,41 +630,110 @@ export function VolunteersView({
                   Nenhum voluntário encontrado neste filtro.
                 </div>
               ) : (
-                filteredPeople.map((person) => (
-                  <div
-                    key={person.primaryKey}
-                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#FCFBF8] transition-colors"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-zinc-900 truncate">
-                        {person.displayName}
-                      </div>
-                      {person.aliases.length > 0 && (
-                        <div className="text-[11px] text-emerald-700 mt-0.5">
-                          Também vinculado a: {person.aliases.join(", ")}
-                        </div>
-                      )}
-                    </div>
+                filteredPeople.map((person) => {
+                  const isEditingThis = editingKey === person.primaryKey;
+                  const commitEdit = () => {
+                    const formatted = formatVolunteerName(editingNameDraft);
+                    if (formatted) {
+                      onRenameVolunteer(person.primaryKey, formatted);
+                    }
+                    setEditingKey(null);
+                    setEditingNameDraft("");
+                  };
 
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
-                      <VolunteerPhoneInput
-                        initialPhone={person.phone}
-                        onCommit={(val) =>
-                          onSavePersonPhone(person.displayName, val)
-                        }
-                      />
-                      <button
-                        type="button"
-                        onClick={() => onDeleteVolunteer(person.primaryKey)}
-                        title="Remover da lista de contatos"
-                        className="min-h-[38px] min-w-[38px] inline-flex items-center justify-center text-zinc-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors cursor-pointer shrink-0"
-                        aria-label={`Remover ${person.displayName}`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                  return (
+                    <div
+                      key={person.primaryKey}
+                      className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#FCFBF8] transition-colors"
+                    >
+                      <div className="min-w-0 flex-1">
+                        {isEditingThis ? (
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              autoFocus
+                              value={editingNameDraft}
+                              onChange={(e) => setEditingNameDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  commitEdit();
+                                } else if (e.key === "Escape") {
+                                  setEditingKey(null);
+                                  setEditingNameDraft("");
+                                }
+                              }}
+                              className="flex-1 min-w-0 px-2.5 py-1.5 text-sm font-semibold text-zinc-900 bg-white border border-emerald-700 rounded-lg focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={commitEdit}
+                              title="Salvar nome"
+                              aria-label="Salvar nome"
+                              className="min-h-[34px] min-w-[34px] inline-flex items-center justify-center bg-emerald-700 text-white hover:bg-emerald-800 rounded-lg transition-colors cursor-pointer shrink-0"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingKey(null);
+                                setEditingNameDraft("");
+                              }}
+                              title="Cancelar edição"
+                              aria-label="Cancelar edição"
+                              className="min-h-[34px] min-w-[34px] inline-flex items-center justify-center bg-[#F4F2EC] text-zinc-700 hover:bg-[#EAE6DC] rounded-lg transition-colors cursor-pointer shrink-0"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="text-sm font-semibold text-zinc-900 truncate">
+                              {person.displayName}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingKey(person.primaryKey);
+                                setEditingNameDraft(person.displayName);
+                              }}
+                              title={`Editar nome de ${person.displayName}`}
+                              aria-label={`Editar nome de ${person.displayName}`}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-zinc-600 hover:text-emerald-800 bg-[#F4F2EC] hover:bg-emerald-50 border border-[#E8E6DF] hover:border-emerald-200 rounded-md transition-colors cursor-pointer shrink-0"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              <span>Editar</span>
+                            </button>
+                          </div>
+                        )}
+                        {person.aliases.length > 0 && (
+                          <div className="text-[11px] text-emerald-700 mt-0.5">
+                            Também vinculado a: {person.aliases.join(", ")}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <VolunteerPhoneInput
+                          initialPhone={person.phone}
+                          onCommit={(val) =>
+                            onSavePersonPhone(person.displayName, val)
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={() => onDeleteVolunteer(person.primaryKey)}
+                          title="Remover da lista de contatos"
+                          className="min-h-[38px] min-w-[38px] inline-flex items-center justify-center text-zinc-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors cursor-pointer shrink-0"
+                          aria-label={`Remover ${person.displayName}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
