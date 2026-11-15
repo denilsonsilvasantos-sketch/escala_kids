@@ -1,8 +1,13 @@
-import { useState, useEffect, type FormEvent } from "react";
-import { X } from "lucide-react";
-import type { GroupDefinition, ShiftType } from "../types/schedule";
+import { useState, useEffect, useMemo, type FormEvent } from "react";
+import { X, Phone } from "lucide-react";
+import type {
+  ContactLink,
+  GroupDefinition,
+  ShiftType,
+} from "../types/schedule";
 import { SCHEDULE_GROUPS } from "../data/initialData";
-import { formatDateDDMM } from "../utils/dateAndMessage";
+import { formatDateDDMM, formatPhoneDisplay } from "../utils/dateAndMessage";
+import { lookupPhoneInBook, normalizeNameKey } from "../utils/contacts";
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -11,6 +16,8 @@ interface QuickAddModalProps {
   initialShift?: ShiftType;
   initialGroupId?: string;
   contactBook: Record<string, string>;
+  contactNames: Record<string, string>;
+  contactLinks: ContactLink[];
   onAddEntry: (entry: {
     date: string;
     shift: ShiftType;
@@ -27,6 +34,8 @@ export function QuickAddModal({
   initialShift = "noite",
   initialGroupId,
   contactBook,
+  contactNames,
+  contactLinks,
   onAddEntry,
 }: QuickAddModalProps) {
   const [shift, setShift] = useState<ShiftType>(initialShift);
@@ -40,6 +49,7 @@ export function QuickAddModal({
   );
   const [volunteerName, setVolunteerName] = useState("");
   const [phone, setPhone] = useState("");
+  const [phoneWasAutoFilled, setPhoneWasAutoFilled] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -50,6 +60,7 @@ export function QuickAddModal({
         ? initialGroupId
         : matching[0]?.id || ""
     );
+    setPhoneWasAutoFilled(false);
   }, [isOpen, initialShift, initialGroupId]);
 
   useEffect(() => {
@@ -61,6 +72,23 @@ export function QuickAddModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isOpen, onClose]);
 
+  const savedSuggestions = useMemo(() => {
+    const q = normalizeNameKey(volunteerName);
+    if (!q) return [];
+    const seen = new Set<string>();
+    const results: { name: string; phone: string }[] = [];
+    for (const [key, savedPhone] of Object.entries(contactBook)) {
+      const norm = normalizeNameKey(key);
+      if (!norm || !savedPhone.trim() || seen.has(norm)) continue;
+      const display = contactNames[norm] || contactNames[key] || key;
+      if (normalizeNameKey(display).includes(q) && normalizeNameKey(display) !== q) {
+        seen.add(norm);
+        results.push({ name: display, phone: savedPhone.trim() });
+      }
+    }
+    return results.slice(0, 4);
+  }, [volunteerName, contactBook, contactNames]);
+
   if (!isOpen) return null;
 
   const handleShiftChange = (nextShift: ShiftType) => {
@@ -71,10 +99,22 @@ export function QuickAddModal({
 
   const handleNameChange = (name: string) => {
     setVolunteerName(name);
-    const matchedPhone = contactBook[name.trim().toLowerCase()];
-    if (matchedPhone && !phone) {
-      setPhone(matchedPhone);
+    const matchedPhone = lookupPhoneInBook(name, contactBook, contactLinks);
+    if (matchedPhone) {
+      if (!phone || phoneWasAutoFilled) {
+        setPhone(matchedPhone);
+        setPhoneWasAutoFilled(true);
+      }
+    } else if (phoneWasAutoFilled) {
+      setPhone("");
+      setPhoneWasAutoFilled(false);
     }
+  };
+
+  const handlePickSuggestion = (name: string, savedPhone: string) => {
+    setVolunteerName(name);
+    setPhone(savedPhone);
+    setPhoneWasAutoFilled(true);
   };
 
   const handleSubmit = (e: FormEvent) => {
@@ -89,6 +129,7 @@ export function QuickAddModal({
     });
     setVolunteerName("");
     setPhone("");
+    setPhoneWasAutoFilled(false);
     onClose();
   };
 
@@ -195,6 +236,23 @@ export function QuickAddModal({
                 placeholder="Ex: Amanda Saragoça"
                 className="w-full px-3 py-2.5 text-sm border border-[#E8E6DF] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
               />
+              {savedSuggestions.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {savedSuggestions.map((item) => (
+                    <button
+                      key={item.name}
+                      type="button"
+                      onClick={() => handlePickSuggestion(item.name, item.phone)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors cursor-pointer"
+                    >
+                      <span>{item.name}</span>
+                      <span className="font-mono-tabular text-[11px] text-emerald-700">
+                        {formatPhoneDisplay(item.phone)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div>
@@ -202,16 +260,22 @@ export function QuickAddModal({
                 htmlFor="quick-add-phone"
                 className="block text-xs font-medium text-zinc-700 mb-1.5"
               >
-                WhatsApp (opcional — se vazio, escolhe no WhatsApp)
+                WhatsApp {phoneWasAutoFilled ? "(preenchido automaticamente)" : "(opcional)"}
               </label>
-              <input
-                id="quick-add-phone"
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="Ex: (11) 99999-9999"
-                className="w-full px-3 py-2.5 text-sm border border-[#E8E6DF] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700 font-mono-tabular"
-              />
+              <div className="relative">
+                <Phone className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  id="quick-add-phone"
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    setPhoneWasAutoFilled(false);
+                  }}
+                  placeholder="Ex: (11) 99999-9999"
+                  className="w-full pl-8 pr-3 py-2.5 text-sm border border-[#E8E6DF] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700 font-mono-tabular"
+                />
+              </div>
             </div>
           </div>
 

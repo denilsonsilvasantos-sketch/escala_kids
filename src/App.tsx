@@ -6,6 +6,8 @@ import { ImageImporterView } from "./components/ImageImporterView";
 import { BatchQueueModal } from "./components/BatchQueueModal";
 import { QuickAddModal } from "./components/QuickAddModal";
 import { CloudSyncModal } from "./components/CloudSyncModal";
+import { ContactMatchModal } from "./components/ContactMatchModal";
+import { ContactsBookModal } from "./components/ContactsBookModal";
 import {
   DEFAULT_TEMPLATES,
   EXTRA_IMAGE_ENTRIES_15_11,
@@ -15,18 +17,32 @@ import {
 } from "./data/initialData";
 import type {
   AppView,
+  ContactLink,
+  ContactMatchCandidate,
   GroupDefinition,
   MessageTemplatesState,
+  PendingContactMatch,
   ScheduleEntry,
   ShiftType,
   VolunteerStatus,
 } from "./types/schedule";
 import { getConfirmationWindowInfo } from "./utils/dateAndMessage";
+import {
+  findPendingMatchForName,
+  getSamePersonKeys,
+  hydrateEntriesWithSavedContacts,
+  lookupPhoneInBook,
+  makeCanonicalPairId,
+  normalizeContactBookKeys,
+  normalizeNameKey,
+} from "./utils/contacts";
 
 const STORAGE_ENTRIES_KEY = "escala-kids:entries:v1";
 const STORAGE_MIGRATION_V2_KEY = "escala-kids:migrated-extra-roles:v2";
 const STORAGE_TEMPLATES_KEY = "escala-kids:templates:v1";
 const STORAGE_CONTACTS_KEY = "escala-kids:contacts:v1";
+const STORAGE_CONTACT_NAMES_KEY = "escala-kids:contact-names:v1";
+const STORAGE_CONTACT_LINKS_KEY = "escala-kids:contact-links:v1";
 
 function loadJson<T>(key: string, fallback: T): T {
   try {
@@ -121,7 +137,15 @@ export default function App() {
   const [templates, setTemplates] =
     useState<MessageTemplatesState>(loadTemplates);
   const [contactBook, setContactBook] = useState<Record<string, string>>(() =>
-    loadJson<Record<string, string>>(STORAGE_CONTACTS_KEY, {})
+    normalizeContactBookKeys(
+      loadJson<Record<string, string>>(STORAGE_CONTACTS_KEY, {})
+    ).book
+  );
+  const [contactNames, setContactNames] = useState<Record<string, string>>(() =>
+    loadJson<Record<string, string>>(STORAGE_CONTACT_NAMES_KEY, {})
+  );
+  const [contactLinks, setContactLinks] = useState<ContactLink[]>(() =>
+    loadJson<ContactLink[]>(STORAGE_CONTACT_LINKS_KEY, [])
   );
 
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
@@ -137,6 +161,10 @@ export default function App() {
   }>({ isOpen: false, shift: "noite" });
 
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
+  const [pendingContactMatches, setPendingContactMatches] = useState<
+    PendingContactMatch[]
+  >([]);
   const [supabaseConfigured, setSupabaseConfigured] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -147,9 +175,13 @@ export default function App() {
   const entriesRef = useRef(entries);
   const templatesRef = useRef(templates);
   const contactBookRef = useRef(contactBook);
+  const contactNamesRef = useRef(contactNames);
+  const contactLinksRef = useRef(contactLinks);
   entriesRef.current = entries;
   templatesRef.current = templates;
   contactBookRef.current = contactBook;
+  contactNamesRef.current = contactNames;
+  contactLinksRef.current = contactLinks;
 
   useEffect(() => {
     try {
@@ -175,10 +207,34 @@ export default function App() {
     }
   }, [contactBook]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_CONTACT_NAMES_KEY,
+        JSON.stringify(contactNames)
+      );
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [contactNames]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_CONTACT_LINKS_KEY,
+        JSON.stringify(contactLinks)
+      );
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [contactLinks]);
+
   const pushStateToCloud = useCallback(
     async (payload: {
       entries: ScheduleEntry[];
       contactBook: Record<string, string>;
+      contactNames: Record<string, string>;
+      contactLinks: ContactLink[];
       templates: MessageTemplatesState;
     }) => {
       const res = await fetch("/api/cloud/state", {
@@ -219,26 +275,66 @@ export default function App() {
         const cloudEntries = Array.isArray(data.entries)
           ? (data.entries as RawStoredEntry[]).map(normalizeEntry)
           : [];
-        const cloudContacts =
+        const rawCloudBook =
           data.contactBook && typeof data.contactBook === "object"
             ? (data.contactBook as Record<string, string>)
             : {};
+        const rawCloudNames =
+          data.contactNames && typeof data.contactNames === "object"
+            ? (data.contactNames as Record<string, string>)
+            : {};
+        const normalizedCloud = normalizeContactBookKeys(
+          rawCloudBook,
+          rawCloudNames
+        );
+        const cloudLinks = Array.isArray(data.contactLinks)
+          ? (data.contactLinks as ContactLink[])
+          : [];
         const cloudTemplates = data.templates as MessageTemplatesState | null;
 
         if (cloudEntries.length === 0 && !cloudTemplates && seedIfEmpty) {
           await pushStateToCloud({
             entries: entriesRef.current,
             contactBook: contactBookRef.current,
+            contactNames: contactNamesRef.current,
+            contactLinks: contactLinksRef.current,
             templates: templatesRef.current,
           });
           hasHydratedCloudRef.current = true;
           return;
         }
 
+        // Backfill contact book from any cloud entries that already have phones
+        const mergedBook = {
+          ...contactBookRef.current,
+          ...normalizedCloud.book,
+        };
+        const mergedNames = {
+          ...contactNamesRef.current,
+          ...normalizedCloud.names,
+        };
+        for (const e of cloudEntries) {
+          const key = normalizeNameKey(e.volunteerName);
+          if (key) {
+            if (!mergedNames[key]) mergedNames[key] = e.volunteerName.trim();
+            if (e.phone.trim() && !mergedBook[key]) {
+              mergedBook[key] = e.phone.trim();
+            }
+          }
+        }
+
+        const hydrated = hydrateEntriesWithSavedContacts(
+          cloudEntries,
+          mergedBook,
+          cloudLinks
+        );
+
         skipNextCloudPushRef.current = true;
         hasHydratedCloudRef.current = true;
-        setEntries(cloudEntries);
-        setContactBook((prev) => ({ ...prev, ...cloudContacts }));
+        setEntries(hydrated.entries);
+        setContactBook(mergedBook);
+        setContactNames(mergedNames);
+        setContactLinks(cloudLinks);
         if (cloudTemplates) {
           setTemplates({
             defaultNoite: upgradeTemplateGreeting(cloudTemplates.defaultNoite),
@@ -281,6 +377,8 @@ export default function App() {
       void pushStateToCloud({
         entries,
         contactBook,
+        contactNames,
+        contactLinks,
         templates,
       }).catch((err) => {
         setSyncError(
@@ -295,6 +393,8 @@ export default function App() {
   }, [
     entries,
     contactBook,
+    contactNames,
+    contactLinks,
     templates,
     supabaseConfigured,
     pushStateToCloud,
@@ -358,31 +458,107 @@ export default function App() {
     );
   };
 
+  const enqueueMatchCheck = useCallback(
+    (
+      incomingName: string,
+      incomingPhone: string,
+      currentEntries: ScheduleEntry[],
+      excludeEntryId?: string
+    ) => {
+      const match = findPendingMatchForName({
+        incomingName,
+        incomingPhone,
+        entries: currentEntries,
+        contactBook: contactBookRef.current,
+        contactNames: contactNamesRef.current,
+        contactLinks: contactLinksRef.current,
+        excludeEntryId,
+      });
+      if (!match) return;
+      setPendingContactMatches((prev) => {
+        if (prev.some((p) => p.incomingKey === match.incomingKey)) return prev;
+        return [...prev, match];
+      });
+    },
+    []
+  );
+
+  const bindPhoneToPerson = useCallback(
+    (volunteerName: string, rawPhone: string, editedEntryId?: string) => {
+      const cleanName = volunteerName.trim();
+      const normKey = normalizeNameKey(cleanName);
+      if (!normKey) return;
+
+      const trimmedPhone = rawPhone.trim();
+      const sameKeys = getSamePersonKeys(normKey, contactLinksRef.current);
+
+      setContactNames((prev) => ({
+        ...prev,
+        [normKey]: cleanName,
+      }));
+
+      if (trimmedPhone) {
+        setContactBook((book) => {
+          const next = { ...book };
+          for (const k of sameKeys) {
+            next[k] = trimmedPhone;
+          }
+          return next;
+        });
+      }
+
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (editedEntryId && e.id === editedEntryId) {
+            return { ...e, phone: rawPhone };
+          }
+          if (
+            trimmedPhone &&
+            sameKeys.has(normalizeNameKey(e.volunteerName))
+          ) {
+            return { ...e, phone: trimmedPhone };
+          }
+          return e;
+        })
+      );
+    },
+    []
+  );
+
   const handleUpdatePhone = (id: string, phone: string) => {
+    const target = entriesRef.current.find((e) => e.id === id);
+    if (!target) return;
+    bindPhoneToPerson(target.volunteerName, phone, id);
+  };
+
+  const handleCommitPhone = (id: string, phone: string) => {
+    const target = entriesRef.current.find((e) => e.id === id);
+    if (!target || phone.trim().length < 8) return;
+    enqueueMatchCheck(target.volunteerName, phone, entriesRef.current, id);
+  };
+
+  const handleUpdateName = (id: string, volunteerName: string) => {
+    const matchedPhone = lookupPhoneInBook(
+      volunteerName,
+      contactBookRef.current,
+      contactLinksRef.current
+    );
     setEntries((prev) =>
       prev.map((e) => {
         if (e.id !== id) return e;
-        const nameKey = e.volunteerName.trim().toLowerCase();
-        if (nameKey && phone.trim()) {
-          setContactBook((book) => ({ ...book, [nameKey]: phone.trim() }));
-        }
-        return { ...e, phone };
+        return {
+          ...e,
+          volunteerName,
+          phone: matchedPhone || e.phone,
+        };
       })
     );
   };
 
-  const handleUpdateName = (id: string, volunteerName: string) => {
-    setEntries((prev) =>
-      prev.map((e) => {
-        if (e.id !== id) return e;
-        const matchedPhone = contactBook[volunteerName.trim().toLowerCase()];
-        return {
-          ...e,
-          volunteerName,
-          phone: e.phone || matchedPhone || "",
-        };
-      })
-    );
+  const handleCommitName = (id: string, volunteerName: string) => {
+    const target = entriesRef.current.find((e) => e.id === id);
+    if (!volunteerName.trim()) return;
+    enqueueMatchCheck(volunteerName, target?.phone || "", entriesRef.current, id);
   };
 
   const handleDeleteEntry = (id: string) => {
@@ -402,38 +578,69 @@ export default function App() {
     phone: string;
   }) => {
     const id = `entry-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const nameKey = newEntry.volunteerName.trim().toLowerCase();
+    const cleanName = newEntry.volunteerName.trim();
+    const normKey = normalizeNameKey(cleanName);
     const resolvedPhone =
-      newEntry.phone.trim() || contactBook[nameKey] || "";
+      newEntry.phone.trim() ||
+      lookupPhoneInBook(cleanName, contactBookRef.current, contactLinksRef.current);
 
-    if (nameKey && resolvedPhone) {
-      setContactBook((book) => ({ ...book, [nameKey]: resolvedPhone }));
+    if (normKey) {
+      setContactNames((prev) => ({ ...prev, [normKey]: cleanName }));
+    }
+    if (normKey && resolvedPhone) {
+      const sameKeys = getSamePersonKeys(normKey, contactLinksRef.current);
+      setContactBook((book) => {
+        const next = { ...book };
+        for (const k of sameKeys) next[k] = resolvedPhone;
+        return next;
+      });
     }
 
-    setEntries((prev) => [
-      ...prev,
-      {
-        id,
-        date: newEntry.date,
-        shift: newEntry.shift,
-        groupId: newEntry.groupId,
-        volunteerName: newEntry.volunteerName,
-        phone: resolvedPhone,
-        status: "pendente",
-        messageSent: false,
-      },
-    ]);
+    const createdEntry: ScheduleEntry = {
+      id,
+      date: newEntry.date,
+      shift: newEntry.shift,
+      groupId: newEntry.groupId,
+      volunteerName: cleanName,
+      phone: resolvedPhone,
+      status: "pendente",
+      messageSent: false,
+    };
+
+    const nextEntries = [...entriesRef.current, createdEntry].map((e) => {
+      if (
+        e.id !== id &&
+        resolvedPhone &&
+        getSamePersonKeys(normKey, contactLinksRef.current).has(
+          normalizeNameKey(e.volunteerName)
+        )
+      ) {
+        return { ...e, phone: resolvedPhone };
+      }
+      return e;
+    });
+
+    setEntries(nextEntries);
+    enqueueMatchCheck(cleanName, resolvedPhone, nextEntries, id);
   };
 
   const handleDuplicateFromDate = (sourceISO: string, targetISO: string) => {
-    const sourceEntries = entries.filter((e) => e.date === sourceISO);
-    const cloned: ScheduleEntry[] = sourceEntries.map((e, idx) => ({
-      ...e,
-      id: `clone-${Date.now()}-${idx}`,
-      date: targetISO,
-      status: "pendente",
-      messageSent: false,
-    }));
+    const sourceEntries = entriesRef.current.filter((e) => e.date === sourceISO);
+    const cloned: ScheduleEntry[] = sourceEntries.map((e, idx) => {
+      const savedPhone = lookupPhoneInBook(
+        e.volunteerName,
+        contactBookRef.current,
+        contactLinksRef.current
+      );
+      return {
+        ...e,
+        id: `clone-${Date.now()}-${idx}`,
+        date: targetISO,
+        phone: savedPhone || e.phone,
+        status: "pendente",
+        messageSent: false,
+      };
+    });
     setEntries((prev) => [...prev, ...cloned]);
   };
 
@@ -444,30 +651,62 @@ export default function App() {
     replaceExistingForShiftDate: boolean;
   }) => {
     const newItems: ScheduleEntry[] = params.assignments.map((item, idx) => {
-      const nameKey = item.volunteerName.trim().toLowerCase();
+      const cleanName = item.volunteerName.trim();
+      const savedPhone = lookupPhoneInBook(
+        cleanName,
+        contactBookRef.current,
+        contactLinksRef.current
+      );
       return {
         id: `imp-${Date.now()}-${idx}`,
         date: params.sundayISO,
         shift: params.shift,
         groupId: item.groupId,
-        volunteerName: item.volunteerName.trim(),
-        phone: contactBook[nameKey] || "",
+        volunteerName: cleanName,
+        phone: savedPhone,
         status: "pendente",
         messageSent: false,
       };
     });
 
-    setEntries((prev) => {
-      const filtered = params.replaceExistingForShiftDate
-        ? prev.filter(
-            (e) => !(e.date === params.sundayISO && e.shift === params.shift)
-          )
-        : prev;
-      return [...filtered, ...newItems];
-    });
+    const filtered = params.replaceExistingForShiftDate
+      ? entriesRef.current.filter(
+          (e) => !(e.date === params.sundayISO && e.shift === params.shift)
+        )
+      : entriesRef.current;
+    const nextEntries = [...filtered, ...newItems];
+
+    setEntries(nextEntries);
     setSelectedIds({});
     setSundayISO(params.sundayISO);
     setActiveView("escala");
+
+    // Check ambiguous matches for unique imported names
+    const checkedKeys = new Set<string>();
+    const pendingList: PendingContactMatch[] = [];
+    for (const item of newItems) {
+      const key = normalizeNameKey(item.volunteerName);
+      if (!key || checkedKeys.has(key)) continue;
+      checkedKeys.add(key);
+      const match = findPendingMatchForName({
+        incomingName: item.volunteerName,
+        incomingPhone: item.phone,
+        entries: nextEntries,
+        contactBook: contactBookRef.current,
+        contactNames: contactNamesRef.current,
+        contactLinks: contactLinksRef.current,
+      });
+      if (match) pendingList.push(match);
+    }
+    if (pendingList.length > 0) {
+      setPendingContactMatches((prev) => {
+        const existingKeys = new Set(prev.map((p) => p.incomingKey));
+        return [
+          ...prev,
+          ...pendingList.filter((m) => !existingKeys.has(m.incomingKey)),
+        ];
+      });
+    }
   };
 
   const handleReplaceVolunteer = (
@@ -476,26 +715,134 @@ export default function App() {
     newPhone: string
   ) => {
     const cleanName = newName.trim();
-    const nameKey = cleanName.toLowerCase();
-    const resolvedPhone = newPhone.trim() || contactBook[nameKey] || "";
+    const normKey = normalizeNameKey(cleanName);
+    const resolvedPhone =
+      newPhone.trim() ||
+      lookupPhoneInBook(cleanName, contactBookRef.current, contactLinksRef.current);
 
-    if (nameKey && resolvedPhone) {
-      setContactBook((book) => ({ ...book, [nameKey]: resolvedPhone }));
+    if (normKey) {
+      setContactNames((prev) => ({ ...prev, [normKey]: cleanName }));
+    }
+    if (normKey && resolvedPhone) {
+      const sameKeys = getSamePersonKeys(normKey, contactLinksRef.current);
+      setContactBook((book) => {
+        const next = { ...book };
+        for (const k of sameKeys) next[k] = resolvedPhone;
+        return next;
+      });
     }
 
-    setEntries((prev) =>
-      prev.map((e) =>
-        e.id === entryId
-          ? {
-              ...e,
-              volunteerName: cleanName,
-              phone: resolvedPhone,
-              status: "pendente",
-              messageSent: false,
-            }
-          : e
-      )
+    const nextEntries = entriesRef.current.map((e) => {
+      if (e.id === entryId) {
+        return {
+          ...e,
+          volunteerName: cleanName,
+          phone: resolvedPhone,
+          status: "pendente" as const,
+          messageSent: false,
+        };
+      }
+      if (
+        resolvedPhone &&
+        getSamePersonKeys(normKey, contactLinksRef.current).has(
+          normalizeNameKey(e.volunteerName)
+        )
+      ) {
+        return { ...e, phone: resolvedPhone };
+      }
+      return e;
+    });
+
+    setEntries(nextEntries);
+    enqueueMatchCheck(cleanName, resolvedPhone, nextEntries, entryId);
+  };
+
+  const handleResolveSamePerson = (
+    pending: PendingContactMatch,
+    candidate: ContactMatchCandidate
+  ) => {
+    const pairId = makeCanonicalPairId(pending.incomingKey, candidate.key);
+    const newLink: ContactLink = {
+      id: pairId,
+      nameKeyA: pending.incomingKey,
+      nameKeyB: candidate.key,
+      displayNameA: pending.incomingName,
+      displayNameB: candidate.displayName,
+      relation: "same",
+    };
+
+    const nextLinks = [
+      ...contactLinksRef.current.filter((l) => l.id !== pairId),
+      newLink,
+    ];
+    setContactLinks(nextLinks);
+
+    const sharedPhone =
+      candidate.phone ||
+      pending.incomingPhone ||
+      lookupPhoneInBook(candidate.displayName, contactBookRef.current, nextLinks) ||
+      lookupPhoneInBook(pending.incomingName, contactBookRef.current, nextLinks);
+
+    const sameKeys = getSamePersonKeys(pending.incomingKey, nextLinks);
+
+    setContactNames((prev) => ({
+      ...prev,
+      [pending.incomingKey]: pending.incomingName,
+      [candidate.key]: candidate.displayName,
+    }));
+
+    if (sharedPhone) {
+      setContactBook((book) => {
+        const next = { ...book };
+        for (const k of sameKeys) {
+          next[k] = sharedPhone;
+        }
+        return next;
+      });
+
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (sameKeys.has(normalizeNameKey(e.volunteerName)) && !e.phone.trim()) {
+            return { ...e, phone: sharedPhone };
+          }
+          return e;
+        })
+      );
+    }
+
+    setPendingContactMatches((prev) =>
+      prev.filter((p) => p.incomingKey !== pending.incomingKey)
     );
+  };
+
+  const handleResolveDistinctPeople = (pending: PendingContactMatch) => {
+    const newLinks: ContactLink[] = pending.candidates.map((c) => ({
+      id: makeCanonicalPairId(pending.incomingKey, c.key),
+      nameKeyA: pending.incomingKey,
+      nameKeyB: c.key,
+      displayNameA: pending.incomingName,
+      displayNameB: c.displayName,
+      relation: "distinct",
+    }));
+
+    setContactLinks((prev) => {
+      const newIds = new Set(newLinks.map((l) => l.id));
+      return [...prev.filter((l) => !newIds.has(l.id)), ...newLinks];
+    });
+
+    setPendingContactMatches((prev) =>
+      prev.filter((p) => p.incomingKey !== pending.incomingKey)
+    );
+  };
+
+  const handleSkipPendingMatch = (pending: PendingContactMatch) => {
+    setPendingContactMatches((prev) =>
+      prev.filter((p) => p.incomingKey !== pending.incomingKey)
+    );
+  };
+
+  const handleRemoveContactLink = (linkId: string) => {
+    setContactLinks((prev) => prev.filter((l) => l.id !== linkId));
   };
 
   return (
@@ -509,6 +856,7 @@ export default function App() {
         onOpenQuickAdd={() =>
           setQuickAddState({ isOpen: true, shift: "noite" })
         }
+        onOpenContactsModal={() => setIsContactsModalOpen(true)}
         onOpenSyncModal={() => {
           setIsSyncModalOpen(true);
           if (supabaseConfigured) {
@@ -535,6 +883,8 @@ export default function App() {
             onMarkSent={handleMarkSent}
             onUpdatePhone={handleUpdatePhone}
             onUpdateName={handleUpdateName}
+            onCommitName={handleCommitName}
+            onCommitPhone={handleCommitPhone}
             onDeleteEntry={handleDeleteEntry}
             onOpenAddForGroup={(shift, groupId) =>
               setQuickAddState({ isOpen: true, shift, groupId })
@@ -549,6 +899,7 @@ export default function App() {
               }))
             }
             contactBook={contactBook}
+            contactLinks={contactLinks}
             onReplaceVolunteer={handleReplaceVolunteer}
           />
         )}
@@ -587,7 +938,27 @@ export default function App() {
         initialShift={quickAddState.shift}
         initialGroupId={quickAddState.groupId}
         contactBook={contactBook}
+        contactNames={contactNames}
+        contactLinks={contactLinks}
         onAddEntry={handleAddEntry}
+      />
+
+      <ContactsBookModal
+        isOpen={isContactsModalOpen}
+        onClose={() => setIsContactsModalOpen(false)}
+        entries={entries}
+        contactBook={contactBook}
+        contactNames={contactNames}
+        contactLinks={contactLinks}
+        onSavePersonPhone={(name, phone) => bindPhoneToPerson(name, phone)}
+        onRemoveLink={handleRemoveContactLink}
+      />
+
+      <ContactMatchModal
+        pendingQueue={pendingContactMatches}
+        onResolveSame={handleResolveSamePerson}
+        onResolveDistinct={handleResolveDistinctPeople}
+        onSkip={handleSkipPendingMatch}
       />
 
       <CloudSyncModal

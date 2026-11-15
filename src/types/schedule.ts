@@ -43,4 +43,28 @@ export interface MessageTemplatesState {
   groupOverrides: Record<string, string>;
 }
 
+export type ContactLinkRelation = "same" | "distinct";
+
+export interface ContactLink {
+  id: string;
+  nameKeyA: string;
+  nameKeyB: string;
+  displayNameA: string;
+  displayNameB: string;
+  relation: ContactLinkRelation;
+}
+
+export interface ContactMatchCandidate {
+  key: string;
+  displayName: string;
+  phone: string;
+}
+
+export interface PendingContactMatch {
+  incomingName: string;
+  incomingKey: string;
+  incomingPhone: string;
+  candidates: ContactMatchCandidate[];
+}
+
 export type AppView = "escala" | "modelos" | "importar";

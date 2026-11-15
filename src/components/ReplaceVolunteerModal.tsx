@@ -1,12 +1,18 @@
 import { useState, useMemo, useEffect, type FormEvent } from "react";
 import { X, RefreshCw, Phone } from "lucide-react";
-import type { GroupDefinition, ScheduleEntry } from "../types/schedule";
+import type {
+  ContactLink,
+  GroupDefinition,
+  ScheduleEntry,
+} from "../types/schedule";
 import { formatDateDDMM } from "../utils/dateAndMessage";
+import { lookupPhoneInBook } from "../utils/contacts";
 
 interface ReplaceVolunteerModalProps {
   entry: ScheduleEntry | null;
   group?: GroupDefinition;
   contactBook: Record<string, string>;
+  contactLinks: ContactLink[];
   knownNames: string[];
   onClose: () => void;
   onConfirmReplace: (entryId: string, newName: string, newPhone: string) => void;
@@ -16,6 +22,7 @@ export function ReplaceVolunteerModal({
   entry,
   group,
   contactBook,
+  contactLinks,
   knownNames,
   onClose,
   onConfirmReplace,
@@ -46,7 +53,7 @@ export function ReplaceVolunteerModal({
 
   const handlePickName = (name: string) => {
     setNewName(name);
-    const savedPhone = contactBook[name.trim().toLowerCase()];
+    const savedPhone = lookupPhoneInBook(name, contactBook, contactLinks);
     if (savedPhone) {
       setNewPhone(savedPhone);
     }

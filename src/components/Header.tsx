@@ -5,6 +5,7 @@ import {
   MessageSquareText,
   ImageUp,
   RefreshCw,
+  Users,
 } from "lucide-react";
 import type { AppView } from "../types/schedule";
 
@@ -16,6 +17,7 @@ interface HeaderProps {
   onOpenBatchModal: () => void;
   onOpenQuickAdd: () => void;
   onOpenSyncModal: () => void;
+  onOpenContactsModal: () => void;
 }
 
 export function Header({
@@ -26,6 +28,7 @@ export function Header({
   onOpenBatchModal,
   onOpenQuickAdd,
   onOpenSyncModal,
+  onOpenContactsModal,
 }: HeaderProps) {
   const navItems: {
     id: AppView;
@@ -95,8 +98,18 @@ export function Header({
             })}
           </nav>
 
-          {/* Actions: Sync + Primary Action */}
+          {/* Actions: Contacts + Sync + Primary Action */}
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenContactsModal}
+              title="Contatos vinculados"
+              className="h-9 min-w-[40px] inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 text-xs font-medium border border-[#E8E6DF] text-zinc-700 bg-white hover:bg-[#FAF9F5] rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+            >
+              <Users className="w-3.5 h-3.5 shrink-0 text-zinc-600" />
+              <span className="hidden sm:inline">Contatos</span>
+            </button>
+
             <button
               type="button"
               onClick={onOpenSyncModal}

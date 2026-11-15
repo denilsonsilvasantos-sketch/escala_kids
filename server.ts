@@ -258,6 +258,15 @@ Regras importantes:
     }
   });
 
+  function normalizeNameKeyServer(name: string): string {
+    return name
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ");
+  }
+
   // Supabase Shared Cloud Sync Routes (sem autenticação)
   app.get("/api/cloud/state", async (_req, res) => {
     try {
@@ -270,13 +279,18 @@ Regras importantes:
         return res.json({ configured: false });
       }
 
-      const [entriesRes, contactsRes, templatesRes] = await Promise.all([
+      const [entriesRes, contactsRes, linksRes, templatesRes] = await Promise.all([
         db
           .from("escala_entries")
           .select(
             "id, date, shift, group_id, volunteer_name, phone, status, message_sent"
           ),
-        db.from("escala_contacts").select("name_key, phone"),
+        db.from("escala_contacts").select("name_key, volunteer_name, phone"),
+        db
+          .from("escala_contact_links")
+          .select(
+            "id, name_key_a, name_key_b, display_name_a, display_name_b, relation"
+          ),
         db
           .from("escala_templates")
           .select("default_noite, default_manha, group_overrides")
@@ -285,14 +299,17 @@ Regras importantes:
       ]);
 
       const firstErr =
-        entriesRes.error || contactsRes.error || templatesRes.error;
+        entriesRes.error ||
+        contactsRes.error ||
+        linksRes.error ||
+        templatesRes.error;
       if (firstErr) {
         if (isMissingTableError(firstErr)) {
           return res.status(400).json({
             configured: true,
             needsSchemaSetup: true,
             error:
-              "As tabelas ainda não foram criadas no Supabase. Execute o script supabase/schema.sql no SQL Editor do seu projeto.",
+              "As tabelas ainda não foram criadas ou estão desatualizadas no Supabase. Execute o script supabase/schema.sql no SQL Editor do seu projeto.",
           });
         }
         return res.status(500).json({ configured: true, error: firstErr.message });
@@ -310,11 +327,26 @@ Regras importantes:
       }));
 
       const contactBook: Record<string, string> = {};
+      const contactNames: Record<string, string> = {};
       for (const row of contactsRes.data || []) {
-        if (row.name_key && row.phone) {
-          contactBook[row.name_key] = row.phone;
+        const normKey = normalizeNameKeyServer(row.name_key || "");
+        if (!normKey) continue;
+        if (row.phone) {
+          contactBook[normKey] = row.phone;
+        }
+        if (row.volunteer_name) {
+          contactNames[normKey] = row.volunteer_name;
         }
       }
+
+      const contactLinks = (linksRes.data || []).map((row) => ({
+        id: row.id,
+        nameKeyA: row.name_key_a,
+        nameKeyB: row.name_key_b,
+        displayNameA: row.display_name_a || row.name_key_a,
+        displayNameB: row.display_name_b || row.name_key_b,
+        relation: row.relation === "same" ? "same" : "distinct",
+      }));
 
       const templates = templatesRes.data
         ? {
@@ -324,7 +356,14 @@ Regras importantes:
           }
         : null;
 
-      return res.json({ configured: true, entries, contactBook, templates });
+      return res.json({
+        configured: true,
+        entries,
+        contactBook,
+        contactNames,
+        contactLinks,
+        templates,
+      });
     } catch (err) {
       console.error("Erro ao carregar dados do Supabase:", err);
       return res
@@ -347,24 +386,34 @@ Regras importantes:
         return res.status(503).json({ error: "Banco indisponível." });
       }
 
-      const { entries, contactBook, templates } = req.body as {
-        entries?: Array<{
-          id: string;
-          date: string;
-          shift: "manha" | "noite";
-          groupId: string;
-          volunteerName: string;
-          phone: string;
-          status: "pendente" | "confirmado" | "recusado";
-          messageSent: boolean;
-        }>;
-        contactBook?: Record<string, string>;
-        templates?: {
-          defaultNoite: string;
-          defaultManha: string;
-          groupOverrides: Record<string, string>;
+      const { entries, contactBook, contactNames, contactLinks, templates } =
+        req.body as {
+          entries?: Array<{
+            id: string;
+            date: string;
+            shift: "manha" | "noite";
+            groupId: string;
+            volunteerName: string;
+            phone: string;
+            status: "pendente" | "confirmado" | "recusado";
+            messageSent: boolean;
+          }>;
+          contactBook?: Record<string, string>;
+          contactNames?: Record<string, string>;
+          contactLinks?: Array<{
+            id: string;
+            nameKeyA: string;
+            nameKeyB: string;
+            displayNameA: string;
+            displayNameB: string;
+            relation: "same" | "distinct";
+          }>;
+          templates?: {
+            defaultNoite: string;
+            defaultManha: string;
+            groupOverrides: Record<string, string>;
+          };
         };
-      };
 
       const nowIso = new Date().toISOString();
 
@@ -427,14 +476,26 @@ Regras importantes:
       }
 
       if (contactBook && typeof contactBook === "object") {
-        const contactRows = Object.entries(contactBook)
-          .filter(([k, v]) => k.trim() && typeof v === "string" && v.trim())
-          .map(([k, v]) => ({
-            name_key: k.trim().toLowerCase(),
-            volunteer_name: k.trim(),
-            phone: v.trim(),
+        const dedupContacts = new Map<
+          string,
+          { name_key: string; volunteer_name: string; phone: string; updated_at: string }
+        >();
+        for (const [k, v] of Object.entries(contactBook)) {
+          const normKey = normalizeNameKeyServer(k);
+          const phone = typeof v === "string" ? v.trim() : "";
+          if (!normKey || !phone) continue;
+          const displayName =
+            contactNames?.[normKey]?.trim() ||
+            contactNames?.[k]?.trim() ||
+            k.trim();
+          dedupContacts.set(normKey, {
+            name_key: normKey,
+            volunteer_name: displayName,
+            phone,
             updated_at: nowIso,
-          }));
+          });
+        }
+        const contactRows = Array.from(dedupContacts.values());
 
         if (contactRows.length > 0) {
           const { error: cUpsertErr } = await db
@@ -476,6 +537,63 @@ Regras importantes:
             .in("name_key", keysToDelete);
           if (cDelErr) {
             return res.status(500).json({ error: cDelErr.message });
+          }
+        }
+      }
+
+      if (Array.isArray(contactLinks)) {
+        const linkRows = contactLinks
+          .filter((l) => l && l.id && l.nameKeyA && l.nameKeyB)
+          .map((l) => ({
+            id: l.id,
+            name_key_a: normalizeNameKeyServer(l.nameKeyA),
+            name_key_b: normalizeNameKeyServer(l.nameKeyB),
+            display_name_a: l.displayNameA || l.nameKeyA,
+            display_name_b: l.displayNameB || l.nameKeyB,
+            relation: l.relation === "same" ? "same" : "distinct",
+            updated_at: nowIso,
+          }));
+
+        if (linkRows.length > 0) {
+          const { error: lUpsertErr } = await db
+            .from("escala_contact_links")
+            .upsert(linkRows, { onConflict: "id" });
+          if (lUpsertErr) {
+            if (isMissingTableError(lUpsertErr)) {
+              return res.status(400).json({
+                needsSchemaSetup: true,
+                error:
+                  "As tabelas ainda não foram criadas ou estão desatualizadas no Supabase. Execute o script supabase/schema.sql no SQL Editor.",
+              });
+            }
+            return res.status(500).json({ error: lUpsertErr.message });
+          }
+        }
+
+        const { data: existingLinks, error: lSelectErr } = await db
+          .from("escala_contact_links")
+          .select("id");
+        if (lSelectErr) {
+          if (isMissingTableError(lSelectErr)) {
+            return res.status(400).json({
+              needsSchemaSetup: true,
+              error:
+                "As tabelas ainda não foram criadas ou estão desatualizadas no Supabase. Execute o script supabase/schema.sql no SQL Editor.",
+            });
+          }
+          return res.status(500).json({ error: lSelectErr.message });
+        }
+        const incomingLinkIds = new Set(linkRows.map((l) => l.id));
+        const linkIdsToDelete = (existingLinks || [])
+          .map((l) => l.id as string)
+          .filter((id) => !incomingLinkIds.has(id));
+        if (linkIdsToDelete.length > 0) {
+          const { error: lDelErr } = await db
+            .from("escala_contact_links")
+            .delete()
+            .in("id", linkIdsToDelete);
+          if (lDelErr) {
+            return res.status(500).json({ error: lDelErr.message });
           }
         }
       }

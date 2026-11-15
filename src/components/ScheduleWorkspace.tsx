@@ -23,6 +23,7 @@ import {
   Eye,
 } from "lucide-react";
 import type {
+  ContactLink,
   GroupCategory,
   MessageTemplatesState,
   ScheduleEntry,
@@ -69,7 +70,10 @@ interface ScheduleWorkspaceProps {
   earlyOverride: boolean;
   onToggleEarlyOverride: () => void;
   contactBook: Record<string, string>;
+  contactLinks: ContactLink[];
   onReplaceVolunteer: (entryId: string, newName: string, newPhone: string) => void;
+  onCommitName?: (entryId: string, name: string) => void;
+  onCommitPhone?: (entryId: string, phone: string) => void;
 }
 
 const CATEGORY_LABELS: Record<GroupCategory, string> = {
@@ -110,7 +114,10 @@ export function ScheduleWorkspace({
   earlyOverride,
   onToggleEarlyOverride,
   contactBook,
+  contactLinks,
   onReplaceVolunteer,
+  onCommitName,
+  onCommitPhone,
 }: ScheduleWorkspaceProps) {
   const [shiftFilter, setShiftFilter] = useState<"todos" | ShiftType>("noite");
   const [statusFilter, setStatusFilter] = useState<StatusFilterType>("todos");
@@ -498,9 +505,15 @@ export function ScheduleWorkspace({
                                     onChange={(e) =>
                                       onUpdateName(entry.id, e.target.value)
                                     }
-                                    onBlur={() => setEditingField(null)}
+                                    onBlur={() => {
+                                      setEditingField(null);
+                                      onCommitName?.(entry.id, entry.volunteerName);
+                                    }}
                                     onKeyDown={(e) => {
-                                      if (e.key === "Enter") setEditingField(null);
+                                      if (e.key === "Enter") {
+                                        setEditingField(null);
+                                        onCommitName?.(entry.id, entry.volunteerName);
+                                      }
                                     }}
                                     className="px-2 py-0.5 text-sm font-semibold text-zinc-900 bg-white border border-emerald-700 rounded-md focus:outline-none"
                                   />
@@ -536,9 +549,15 @@ export function ScheduleWorkspace({
                                     onChange={(e) =>
                                       onUpdatePhone(entry.id, e.target.value)
                                     }
-                                    onBlur={() => setEditingField(null)}
+                                    onBlur={() => {
+                                      setEditingField(null);
+                                      onCommitPhone?.(entry.id, entry.phone);
+                                    }}
                                     onKeyDown={(e) => {
-                                      if (e.key === "Enter") setEditingField(null);
+                                      if (e.key === "Enter") {
+                                        setEditingField(null);
+                                        onCommitPhone?.(entry.id, entry.phone);
+                                      }
                                     }}
                                     placeholder="(11) 99999-9999"
                                     className="w-36 px-2 py-0.5 text-xs font-mono-tabular text-zinc-800 bg-white border border-emerald-700 rounded-md focus:outline-none"
@@ -1121,6 +1140,7 @@ export function ScheduleWorkspace({
         entry={replacingEntry}
         group={replacingGroup}
         contactBook={contactBook}
+        contactLinks={contactLinks}
         knownNames={knownNames}
         onClose={() => setReplacingEntryId(null)}
         onConfirmReplace={(entryId, newName, newPhone) => {
