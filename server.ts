@@ -115,6 +115,10 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: "25mb" }));
 
+  app.get("/favicon.ico", (_req, res) => {
+    return res.status(204).end();
+  });
+
   app.post("/api/parse-schedule", async (req, res) => {
     try {
       const { imageBase64, mimeType, targetDateLabel, shift } = req.body as {
@@ -759,6 +763,10 @@ Regras importantes:
         .status(500)
         .json({ error: "Erro ao salvar alterações no Supabase." });
     }
+  });
+
+  app.use("/api", (_req, res) => {
+    return res.status(404).json({ error: "Rota de API não encontrada." });
   });
 
   if (process.env.NODE_ENV !== "production") {

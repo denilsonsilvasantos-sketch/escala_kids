@@ -242,7 +242,13 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      const rawText = await res.text();
+      let data: { needsSchemaSetup?: boolean; error?: string } = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        data = {};
+      }
       if (!res.ok) {
         if (data.needsSchemaSetup) setNeedsSchemaSetup(true);
         throw new Error(data.error || "Erro ao salvar na nuvem.");
@@ -259,7 +265,25 @@ export default function App() {
       setSyncError(null);
       try {
         const res = await fetch("/api/cloud/state");
-        const data = await res.json();
+        const rawText = await res.text();
+        let data: {
+          configured?: boolean;
+          needsSchemaSetup?: boolean;
+          error?: string;
+          entries?: unknown;
+          contactBook?: unknown;
+          contactNames?: unknown;
+          contactLinks?: unknown;
+          templates?: unknown;
+        } = {};
+        try {
+          data = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          if (!res.ok) {
+            throw new Error(`Servidor indisponível (HTTP ${res.status}).`);
+          }
+          throw new Error("Resposta inválida ao ler dados da nuvem.");
+        }
         setSupabaseConfigured(Boolean(data.configured));
 
         if (!data.configured) {

@@ -177,13 +177,36 @@ export function VolunteersView({
           }),
         });
         const rawText = await res.text();
-        const data = rawText ? JSON.parse(rawText) : {};
-        if (!res.ok) {
-          throw new Error(data.error || "Erro ao ler imagem.");
+        let data: {
+          error?: string;
+          volunteers?: ExtractedVolunteerOccurrence[];
+        } = {};
+        try {
+          data = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          if (res.status === 404) {
+            throw new Error(
+              "O servidor da rota /api/extract-volunteers não foi encontrado (404). Se estiver no link compartilhado/publicado, atualize a publicação; se estiver no editor, recarregue a página."
+            );
+          }
+          if (res.status === 413) {
+            throw new Error(
+              "A imagem enviada ficou muito grande. Tente recortar ou aproximar apenas a tabela."
+            );
+          }
+          throw new Error(
+            "O servidor retornou uma resposta inesperada. Recarregue a página e tente novamente."
+          );
         }
-        const list = Array.isArray(data.volunteers)
-          ? (data.volunteers as ExtractedVolunteerOccurrence[])
-          : [];
+        if (!res.ok) {
+          throw new Error(
+            data.error ||
+              (res.status === 404
+                ? "Rota /api/extract-volunteers não encontrada (404). Recarregue ou republicar o app."
+                : "Erro ao ler imagem.")
+          );
+        }
+        const list = Array.isArray(data.volunteers) ? data.volunteers : [];
         if (list.length === 0) {
           setExtractError("Nenhum nome de voluntário foi identificado nesta imagem.");
         } else {
