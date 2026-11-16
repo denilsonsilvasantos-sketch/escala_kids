@@ -49,31 +49,20 @@ export const SCHEDULE_GROUPS: GroupDefinition[] = [
   { id: "noite-coordenador", shift: "noite", label: "Coordenador(a)", category: "lideranca", order: 23 },
 ];
 
+const BASE_GENERAL_TEMPLATE = `{saudacao} 🤗
+A paz do Senhor Jesus!
+
+Passando pra confirmar nossa escala desse domingo, dia {data} no Culto da {culto}.
+
+{grupo}
+
+Tudo certo?
+
+❤️🔥Lembrando tbm da nossa oração com toda equipe no templo kids as {horario_oracao}.`;
+
 export const DEFAULT_TEMPLATES: MessageTemplatesState = {
-  defaultNoite: `{saudacao} 🤗
-A paz do Senhor Jesus!
-
-Passando pra confirmar nossa escala desse domingo, dia {data} no Culto da {culto}.
-
-{grupo}
-
-Tudo certo?
-
-💡Procure chegar com 45 min de antecedência para a abertura do check-in.
-
-❤️🔥Lembrando tbm da nossa oração com toda equipe no templo kids as 18hs.`,
-  defaultManha: `{saudacao} 🤗
-A paz do Senhor Jesus!
-
-Passando pra confirmar nossa escala desse domingo, dia {data} no Culto da {culto}.
-
-{grupo}
-
-Tudo certo?
-
-💡Procure chegar com 45 min de antecedência para a abertura do check-in.
-
-❤️🔥Lembrando tbm da nossa oração com toda equipe no templo kids antes do culto.`,
+  defaultNoite: BASE_GENERAL_TEMPLATE,
+  defaultManha: BASE_GENERAL_TEMPLATE,
   groupOverrides: {},
 };
 

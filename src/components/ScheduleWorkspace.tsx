@@ -41,6 +41,7 @@ import {
   getGreetingByTime,
   getTemplateForGroup,
   getUpcomingSundays,
+  isFirstSundayOfMonth,
   renderScheduleMessage,
   snapToSunday,
 } from "../utils/dateAndMessage";
@@ -732,12 +733,19 @@ export function ScheduleWorkspace({
       <div className="bg-white border border-[#E8E6DF] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] p-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight text-zinc-900">
-              Escala de Domingo{" "}
-              <span className="font-mono-tabular text-emerald-700">
-                {dateDDMM}
-              </span>
-            </h1>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="font-display text-2xl font-bold tracking-tight text-zinc-900">
+                Escala de Domingo{" "}
+                <span className="font-mono-tabular text-emerald-700">
+                  {dateDDMM}
+                </span>
+              </h1>
+              {isFirstSundayOfMonth(sundayISO) && (
+                <span className="px-2.5 py-0.5 text-xs font-semibold rounded-md bg-amber-50 text-amber-900 border border-amber-200">
+                  Culto de Santa Ceia
+                </span>
+              )}
+            </div>
 
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
               {windowInfo.isUnlocked ? (

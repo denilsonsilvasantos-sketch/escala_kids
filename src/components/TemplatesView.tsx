@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { RotateCcw, Check, Copy } from "lucide-react";
+import { RotateCcw, Check, Copy, Sparkles } from "lucide-react";
 import type {
   GroupDefinition,
   MessageTemplatesState,
@@ -9,8 +9,13 @@ import { DEFAULT_TEMPLATES, SCHEDULE_GROUPS } from "../data/initialData";
 import {
   formatDateDDMM,
   getGreetingByTime,
+  getPrayerTimeForShift,
+  getTemplateForGroup,
   getUpcomingSundays,
+  isFirstSundayOfMonth,
   renderScheduleMessage,
+  ROLE_DEFAULT_TEMPLATES,
+  ROLE_TEMPLATE_KEYS,
 } from "../utils/dateAndMessage";
 import { WhatsAppPreviewCard } from "./WhatsAppPreviewCard";
 
@@ -20,51 +25,93 @@ interface TemplatesViewProps {
   activeSundayISO: string;
 }
 
-type EditorTarget = "defaultNoite" | "defaultManha" | string;
+type RoleTargetId =
+  | typeof ROLE_TEMPLATE_KEYS.professor
+  | typeof ROLE_TEMPLATE_KEYS.auxiliar
+  | typeof ROLE_TEMPLATE_KEYS.seguranca;
+
+type EditorTarget = "defaultNoite" | "defaultManha" | RoleTargetId | string;
+
+const ROLE_TARGETS: {
+  id: RoleTargetId;
+  label: string;
+  subtitle: string;
+  defaultText: string;
+  sampleGroupLabel: string;
+}[] = [
+  {
+    id: ROLE_TEMPLATE_KEYS.professor,
+    label: "Professor(a) (todas as turmas)",
+    subtitle: "Orienta auxiliares e chegada 45min antes",
+    defaultText: ROLE_DEFAULT_TEMPLATES.professor,
+    sampleGroupLabel: "Professor(a) 5 anos",
+  },
+  {
+    id: ROLE_TEMPLATE_KEYS.auxiliar,
+    label: "Auxiliar (todas as turmas)",
+    subtitle: "Procurar professor(a) para cooperar",
+    defaultText: ROLE_DEFAULT_TEMPLATES.auxiliar,
+    sampleGroupLabel: "Auxiliar 5 anos",
+  },
+  {
+    id: ROLE_TEMPLATE_KEYS.seguranca,
+    label: "Segurança",
+    subtitle: "Chegada 45min antes para check-in",
+    defaultText: ROLE_DEFAULT_TEMPLATES.seguranca,
+    sampleGroupLabel: "Segurança",
+  },
+];
 
 export function TemplatesView({
   templates,
   onUpdateTemplates,
   activeSundayISO,
 }: TemplatesViewProps) {
-  const [selectedTarget, setSelectedTarget] =
-    useState<EditorTarget>("defaultNoite");
+  const [selectedTarget, setSelectedTarget] = useState<EditorTarget>(
+    ROLE_TEMPLATE_KEYS.professor
+  );
   const [previewShift, setPreviewShift] = useState<ShiftType>("noite");
   const [previewDateISO, setPreviewDateISO] = useState<string>(activeSundayISO);
   const [testHour, setTestHour] = useState<number>(() => new Date().getHours());
   const [copiedPreview, setCopiedPreview] = useState(false);
 
   const upcomingSundays = useMemo(
-    () => getUpcomingSundays(activeSundayISO, 4),
+    () => getUpcomingSundays(activeSundayISO, 5),
     [activeSundayISO]
+  );
+
+  const activeRoleMeta = useMemo(
+    () => ROLE_TARGETS.find((r) => r.id === selectedTarget) || null,
+    [selectedTarget]
   );
 
   const activeGroup: GroupDefinition | undefined = useMemo(() => {
     if (
       selectedTarget === "defaultNoite" ||
-      selectedTarget === "defaultManha"
+      selectedTarget === "defaultManha" ||
+      activeRoleMeta
     ) {
-      return SCHEDULE_GROUPS.find(
-        (g) =>
-          g.shift === (selectedTarget === "defaultManha" ? "manha" : "noite")
-      );
+      return undefined;
     }
     return SCHEDULE_GROUPS.find((g) => g.id === selectedTarget);
-  }, [selectedTarget]);
+  }, [selectedTarget, activeRoleMeta]);
 
   const currentEditorValue = useMemo(() => {
     if (selectedTarget === "defaultNoite") return templates.defaultNoite;
     if (selectedTarget === "defaultManha") return templates.defaultManha;
-    const override = templates.groupOverrides[selectedTarget];
-    if (override !== undefined) return override;
-    return activeGroup?.shift === "manha"
-      ? templates.defaultManha
-      : templates.defaultNoite;
-  }, [selectedTarget, templates, activeGroup]);
+    if (activeRoleMeta) {
+      return (
+        templates.groupOverrides[activeRoleMeta.id] ?? activeRoleMeta.defaultText
+      );
+    }
+    if (activeGroup) {
+      return getTemplateForGroup(templates, activeGroup);
+    }
+    return templates.defaultNoite;
+  }, [selectedTarget, templates, activeRoleMeta, activeGroup]);
 
   const isCustomGroupOverride =
-    selectedTarget !== "defaultNoite" &&
-    selectedTarget !== "defaultManha" &&
+    Boolean(activeGroup) &&
     Boolean(templates.groupOverrides[selectedTarget]);
 
   const handleTemplateChange = (value: string) => {
@@ -117,24 +164,24 @@ export function TemplatesView({
     return d;
   }, [testHour]);
 
-  const previewText = useMemo(() => {
-    const shiftToUse =
-      selectedTarget === "defaultManha"
-        ? "manha"
-        : selectedTarget === "defaultNoite"
-          ? "noite"
-          : activeGroup?.shift ?? previewShift;
+  const effectivePreviewShift: ShiftType =
+    selectedTarget === "defaultManha"
+      ? "manha"
+      : selectedTarget === "defaultNoite"
+        ? "noite"
+        : activeGroup?.shift ?? previewShift;
 
+  const previewText = useMemo(() => {
     const groupLabel =
-      selectedTarget === "defaultNoite"
+      selectedTarget === "defaultNoite" || selectedTarget === "defaultManha"
         ? "Louvor 3 a 6 anos"
-        : selectedTarget === "defaultManha"
-          ? "Professor(a) 5 e 6 anos"
+        : activeRoleMeta
+          ? activeRoleMeta.sampleGroupLabel
           : activeGroup?.label ?? "Louvor 3 a 6 anos";
 
     return renderScheduleMessage(currentEditorValue, {
       sundayISO: previewDateISO,
-      shift: shiftToUse,
+      shift: effectivePreviewShift,
       groupLabel,
       now: simulatedNow,
     });
@@ -142,8 +189,9 @@ export function TemplatesView({
     currentEditorValue,
     previewDateISO,
     selectedTarget,
+    activeRoleMeta,
     activeGroup,
-    previewShift,
+    effectivePreviewShift,
     simulatedNow,
   ]);
 
@@ -159,6 +207,7 @@ export function TemplatesView({
 
   const manhaGroups = SCHEDULE_GROUPS.filter((g) => g.shift === "manha");
   const noiteGroups = SCHEDULE_GROUPS.filter((g) => g.shift === "noite");
+  const isPreviewSantaCeia = isFirstSundayOfMonth(previewDateISO);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-7">
@@ -169,59 +218,88 @@ export function TemplatesView({
         <p className="text-sm text-zinc-600 mt-1">
           Use{" "}
           <span className="font-mono-tabular font-medium text-zinc-900">
-            {"{saudacao}"}
+            {"{horario_oracao}"}
           </span>{" "}
-          para ajustar automaticamente entre Bom dia, Boa tarde e Boa noite conforme o horário do disparo, e{" "}
-          <span className="font-mono-tabular font-medium text-zinc-900">
-            {"{data}"}
-          </span>{" "}
-          para exibir sempre no formato DD/MM.
+          para trocar automaticamente entre <strong>9:45hs</strong> (Manhã) e{" "}
+          <strong>18hs</strong> (Noite). Todo{" "}
+          <strong>1º domingo do mês</strong> é identificado automaticamente como{" "}
+          <strong>Culto de Santa Ceia</strong>.
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left column: Selector of defaults & group overrides */}
+        {/* Left column: Selector of role standards & group overrides */}
         <div className="lg:col-span-4 bg-white border border-[#E8E6DF] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] overflow-hidden">
-          <div className="p-4 border-b border-[#EFECE4] bg-[#FAF9F5]">
-            <div className="text-xs font-medium text-zinc-500 mb-2">
-              Modelos padrão por culto
+          <div className="p-4 border-b border-[#EFECE4] bg-[#FAF9F5] space-y-4">
+            <div>
+              <div className="text-xs font-medium text-zinc-500 mb-2">
+                Padrão por função (Manhã e Noite automáticos)
+              </div>
+              <div className="space-y-1">
+                {ROLE_TARGETS.map((role) => {
+                  const active = selectedTarget === role.id;
+                  return (
+                    <button
+                      key={role.id}
+                      type="button"
+                      onClick={() => setSelectedTarget(role.id)}
+                      className={`w-full text-left px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
+                        active
+                          ? "bg-emerald-50 text-emerald-800"
+                          : "text-zinc-700 hover:bg-zinc-100/70"
+                      }`}
+                    >
+                      <div className="truncate">{role.label}</div>
+                      <div className="text-[11px] font-normal text-zinc-500 truncate">
+                        {role.subtitle}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="space-y-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedTarget("defaultNoite");
-                  setPreviewShift("noite");
-                }}
-                className={`w-full text-left px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
-                  selectedTarget === "defaultNoite"
-                    ? "bg-emerald-50 text-emerald-800"
-                    : "text-zinc-700 hover:bg-zinc-100/70"
-                }`}
-              >
-                Padrão — Culto da Noite
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedTarget("defaultManha");
-                  setPreviewShift("manha");
-                }}
-                className={`w-full text-left px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
-                  selectedTarget === "defaultManha"
-                    ? "bg-emerald-50 text-emerald-800"
-                    : "text-zinc-700 hover:bg-zinc-100/70"
-                }`}
-              >
-                Padrão — Culto da Manhã
-              </button>
+
+            <div>
+              <div className="text-xs font-medium text-zinc-500 mb-2">
+                Padrão Geral (Refeitório, Pipoca, Mídia, Louvor, Liderança)
+              </div>
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTarget("defaultNoite");
+                    setPreviewShift("noite");
+                  }}
+                  className={`w-full text-left px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
+                    selectedTarget === "defaultNoite"
+                      ? "bg-emerald-50 text-emerald-800"
+                      : "text-zinc-700 hover:bg-zinc-100/70"
+                  }`}
+                >
+                  Geral — Culto da Noite (18hs)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTarget("defaultManha");
+                    setPreviewShift("manha");
+                  }}
+                  className={`w-full text-left px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
+                    selectedTarget === "defaultManha"
+                      ? "bg-emerald-50 text-emerald-800"
+                      : "text-zinc-700 hover:bg-zinc-100/70"
+                  }`}
+                >
+                  Geral — Culto da Manhã (9:45hs)
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="p-4 max-h-[470px] overflow-y-auto space-y-5">
+          <div className="p-4 max-h-[420px] overflow-y-auto space-y-5">
             <div>
               <div className="text-xs font-medium text-zinc-500 mb-2">
-                Personalizar grupo específico (Noite)
+                Personalizar função específica (Noite)
               </div>
               <div className="space-y-0.5">
                 {noiteGroups.map((group) => {
@@ -261,7 +339,7 @@ export function TemplatesView({
 
             <div>
               <div className="text-xs font-medium text-zinc-500 mb-2">
-                Personalizar grupo específico (Manhã)
+                Personalizar função específica (Manhã)
               </div>
               <div className="space-y-0.5">
                 {manhaGroups.map((group) => {
@@ -308,17 +386,21 @@ export function TemplatesView({
               <div>
                 <h2 className="font-display text-base font-semibold text-zinc-900">
                   {selectedTarget === "defaultNoite"
-                    ? "Modelo Padrão — Culto da Noite"
+                    ? "Padrão Geral — Culto da Noite"
                     : selectedTarget === "defaultManha"
-                      ? "Modelo Padrão — Culto da Manhã"
-                      : `${activeGroup?.label} (${activeGroup?.shift === "manha" ? "Manhã" : "Noite"})`}
+                      ? "Padrão Geral — Culto da Manhã"
+                      : activeRoleMeta
+                        ? activeRoleMeta.label
+                        : `${activeGroup?.label} (${activeGroup?.shift === "manha" ? "Manhã" : "Noite"})`}
                 </h2>
                 <p className="text-xs text-zinc-500 mt-0.5">
-                  {isCustomGroupOverride
-                    ? "Este grupo usa uma mensagem personalizada."
-                    : selectedTarget.startsWith("default")
-                      ? "Usado por todos os grupos deste turno sem personalização."
-                      : "Usando o modelo padrão do turno. Edite abaixo para personalizar só este grupo."}
+                  {activeRoleMeta
+                    ? "Aplicado automaticamente para essa função na Manhã e na Noite."
+                    : isCustomGroupOverride
+                      ? "Este grupo usa uma mensagem personalizada."
+                      : selectedTarget.startsWith("default")
+                        ? "Usado por Refeitório, Pipoca, Mídia, Louvor e Liderança neste culto."
+                        : "Usando o padrão da função/turno. Edite abaixo para personalizar só este grupo."}
                 </p>
               </div>
 
@@ -329,9 +411,9 @@ export function TemplatesView({
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>
-                  {selectedTarget.startsWith("default")
-                    ? "Restaurar original"
-                    : "Voltar ao padrão do turno"}
+                  {selectedTarget.startsWith("default") || activeRoleMeta
+                    ? "Restaurar padrão"
+                    : "Voltar ao padrão"}
                 </span>
               </button>
             </div>
@@ -366,6 +448,13 @@ export function TemplatesView({
               >
                 {"{grupo}"}
               </button>
+              <button
+                type="button"
+                onClick={() => insertVariable("{horario_oracao}")}
+                className="px-2.5 py-1 text-xs font-mono-tabular bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded transition-colors cursor-pointer"
+              >
+                {"{horario_oracao}"} → {getPrayerTimeForShift(effectivePreviewShift)}
+              </button>
             </div>
 
             <textarea
@@ -376,19 +465,52 @@ export function TemplatesView({
             />
           </div>
 
-          {/* Live WhatsApp Preview with Time-of-Day & Sunday Test Controls */}
+          {/* Live WhatsApp Preview with Shift, Time-of-Day & Sunday Test Controls */}
           <div className="bg-white border border-[#E8E6DF] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] p-6 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h3 className="font-display text-sm font-semibold text-zinc-900">
-                  Simulação em tempo real no WhatsApp
+                <h3 className="font-display text-sm font-semibold text-zinc-900 flex items-center gap-2">
+                  <span>Simulação em tempo real no WhatsApp</span>
+                  {isPreviewSantaCeia && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium bg-amber-50 text-amber-900 border border-amber-200 rounded-md">
+                      <Sparkles className="w-3 h-3 text-amber-700" />
+                      Santa Ceia (1º domingo)
+                    </span>
+                  )}
                 </h3>
                 <p className="text-xs text-zinc-500">
-                  Teste a troca de data e de horário de envio:
+                  Teste a troca de turno, data (incluindo 1º domingo = Santa Ceia) e horário:
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {!selectedTarget.startsWith("default") && !activeGroup && (
+                  <div className="flex items-center gap-1 p-1 bg-[#F4F2EC] rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewShift("noite")}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                        previewShift === "noite"
+                          ? "bg-white text-zinc-900 shadow-xs"
+                          : "text-zinc-600"
+                      }`}
+                    >
+                      Noite (18hs)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewShift("manha")}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                        previewShift === "manha"
+                          ? "bg-white text-zinc-900 shadow-xs"
+                          : "text-zinc-600"
+                      }`}
+                    >
+                      Manhã (9:45hs)
+                    </button>
+                  </div>
+                )}
+
                 {/* Time-of-day tester */}
                 <div className="flex items-center gap-1 p-1 bg-[#F4F2EC] rounded-lg">
                   {[
@@ -414,34 +536,45 @@ export function TemplatesView({
                 </div>
 
                 {/* Sunday tester */}
-                <div className="flex items-center gap-1 p-1 bg-[#F4F2EC] rounded-lg">
-                  {upcomingSundays.map((sunday) => (
-                    <button
-                      key={sunday}
-                      type="button"
-                      onClick={() => setPreviewDateISO(sunday)}
-                      className={`px-2.5 py-1 text-xs font-mono-tabular font-medium rounded-md transition-colors cursor-pointer ${
-                        previewDateISO === sunday
-                          ? "bg-white text-zinc-900 shadow-xs"
-                          : "text-zinc-600 hover:text-zinc-900"
-                      }`}
-                    >
-                      {formatDateDDMM(sunday)}
-                    </button>
-                  ))}
+                <div className="flex flex-wrap items-center gap-1 p-1 bg-[#F4F2EC] rounded-lg">
+                  {upcomingSundays.map((sunday) => {
+                    const firstSunday = isFirstSundayOfMonth(sunday);
+                    return (
+                      <button
+                        key={sunday}
+                        type="button"
+                        onClick={() => setPreviewDateISO(sunday)}
+                        title={
+                          firstSunday
+                            ? "1º domingo do mês (Culto de Santa Ceia)"
+                            : undefined
+                        }
+                        className={`px-2.5 py-1 text-xs font-mono-tabular font-medium rounded-md transition-colors cursor-pointer ${
+                          previewDateISO === sunday
+                            ? "bg-white text-zinc-900 shadow-xs"
+                            : "text-zinc-600 hover:text-zinc-900"
+                        }`}
+                      >
+                        {formatDateDDMM(sunday)}
+                        {firstSunday ? " · Ceia" : ""}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
 
             <WhatsAppPreviewCard
               recipientTitle={
-                selectedTarget === "defaultNoite"
+                selectedTarget === "defaultNoite" || selectedTarget === "defaultManha"
                   ? "Louvor 3 a 6 anos"
-                  : selectedTarget === "defaultManha"
-                    ? "Professor(a) 5 e 6 anos"
+                  : activeRoleMeta
+                    ? activeRoleMeta.sampleGroupLabel
                     : activeGroup?.label || "Voluntário"
               }
-              recipientSubtitle={`Simulação · ${formatDateDDMM(previewDateISO)}`}
+              recipientSubtitle={`Simulação · ${formatDateDDMM(previewDateISO)}${
+                isPreviewSantaCeia ? " · Santa Ceia" : ""
+              }`}
               message={previewText}
               timeLabel={`${String(testHour).padStart(2, "0")}:00`}
             />

@@ -108,6 +108,78 @@ export function getConfirmationWindowInfo(
   };
 }
 
+/**
+ * Returns true if the given Sunday (YYYY-MM-DD) is the first Sunday of the month (Santa Ceia).
+ */
+export function isFirstSundayOfMonth(sundayISO: string): boolean {
+  const date = parseLocalISODate(sundayISO);
+  return date.getDay() === 0 && date.getDate() <= 7;
+}
+
+/**
+ * Returns the team prayer time by shift: 9:45hs (manhã) or 18hs (noite).
+ */
+export function getPrayerTimeForShift(shift: ShiftType): string {
+  return shift === "manha" ? "9:45hs" : "18hs";
+}
+
+export const ROLE_TEMPLATE_KEYS = {
+  professor: "__role_professor",
+  auxiliar: "__role_auxiliar",
+  seguranca: "__role_seguranca",
+} as const;
+
+export const ROLE_DEFAULT_TEMPLATES: Record<
+  keyof typeof ROLE_TEMPLATE_KEYS,
+  string
+> = {
+  professor: `{saudacao} 🤗
+A paz do Senhor Jesus!
+
+Passando pra confirmar nossa escala desse domingo, dia {data} no Culto da {culto}.
+
+{grupo}
+
+Tudo certo?
+
+💡Procure seus auxiliares de sala e oriente eles sobre como podem cooperar com a ministração.
+
+❤️🔥Lembrando que nosso horário de chegada é 45min antes do início do culto, para preparação da sala, oração com a equipe e alinhamento com auxiliares. 
+Nossa oração com toda equipe acontece no templo kids as {horario_oracao}.`,
+  auxiliar: `{saudacao} 🤗
+A paz do Senhor Jesus!
+
+Passando pra confirmar nossa escala desse domingo, dia {data} no Culto da {culto}.
+
+{grupo}
+
+Tudo certo?
+
+💡Procure seu professor (a) para saber qual será a ministração do dia e como poderá ajudar.
+❤️🔥Lembrando tbm da nossa oração com toda equipe no templo kids as {horario_oracao}.`,
+  seguranca: `{saudacao} 🤗
+A paz do Senhor Jesus!
+
+Passando pra confirmar nossa escala desse domingo, dia {data} no Culto da {culto}.
+
+{grupo}
+
+Tudo certo?
+
+💡Procure chegar com 45 min de antecedência para a abertura do check-in.
+
+❤️🔥Lembrando tbm da nossa oração com toda equipe no templo kids as {horario_oracao}.`,
+};
+
+export function getRoleTemplateKeyForGroup(
+  group: GroupDefinition
+): keyof typeof ROLE_TEMPLATE_KEYS | null {
+  if (group.category === "professor") return "professor";
+  if (group.category === "auxiliar") return "auxiliar";
+  if (group.id.endsWith("-seguranca")) return "seguranca";
+  return null;
+}
+
 export function getTemplateForGroup(
   templates: MessageTemplatesState,
   group: GroupDefinition
@@ -116,6 +188,16 @@ export function getTemplateForGroup(
   if (override && override.trim().length > 0) {
     return override;
   }
+
+  const roleKey = getRoleTemplateKeyForGroup(group);
+  if (roleKey) {
+    const roleOverride = templates.groupOverrides[ROLE_TEMPLATE_KEYS[roleKey]];
+    if (roleOverride && roleOverride.trim().length > 0) {
+      return roleOverride;
+    }
+    return ROLE_DEFAULT_TEMPLATES[roleKey];
+  }
+
   return group.shift === "manha"
     ? templates.defaultManha
     : templates.defaultNoite;
@@ -133,12 +215,23 @@ export function renderScheduleMessage(
   const dateDDMM = formatDateDDMM(params.sundayISO);
   const cultoLabel = params.shift === "manha" ? "manhã" : "noite";
   const greeting = getGreetingByTime(params.now ?? new Date());
+  const prayerTime = getPrayerTimeForShift(params.shift);
+  const santaCeia = isFirstSundayOfMonth(params.sundayISO);
 
-  const rendered = template
+  let rendered = template;
+  if (santaCeia) {
+    rendered = rendered.replace(
+      /no\s+Culto\s+da\s+\{culto\}/gi,
+      `no Culto de Santa Ceia - ${cultoLabel}`
+    );
+  }
+
+  rendered = rendered
     .replace(/\{saudacao\}/gi, greeting)
     .replace(/\{data\}/gi, dateDDMM)
     .replace(/\{culto\}/gi, cultoLabel)
     .replace(/\{grupo\}/gi, params.groupLabel)
+    .replace(/\{hor[aá]rio[\s_]ora[cç][aã]o\}/gi, prayerTime)
     .replace(/\r\n/g, "\n")
     .trim();
 

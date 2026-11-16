@@ -115,21 +115,59 @@ function upgradeTemplateGreeting(text: string): string {
   return text.replace(/^(Bom dia!|Boa tarde!|Boa noite!)/i, "{saudacao}");
 }
 
+function isLegacyDefaultTemplate(text: string, variant: "noite" | "manha"): boolean {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  const hasCheckIn = normalized.includes("abertura do check-in");
+  if (!hasCheckIn) return false;
+  if (variant === "noite") {
+    return normalized.includes("templo kids as 18hs");
+  }
+  return normalized.includes("templo kids antes do culto");
+}
+
+function upgradeTemplatesState(loaded: MessageTemplatesState): {
+  templates: MessageTemplatesState;
+  upgraded: boolean;
+} {
+  let upgraded = false;
+  const rawNoite = upgradeTemplateGreeting(loaded.defaultNoite || "");
+  const rawManha = upgradeTemplateGreeting(loaded.defaultManha || "");
+
+  const nextNoite =
+    !rawNoite || isLegacyDefaultTemplate(rawNoite, "noite")
+      ? ((upgraded = rawNoite !== DEFAULT_TEMPLATES.defaultNoite),
+        DEFAULT_TEMPLATES.defaultNoite)
+      : rawNoite;
+
+  const nextManha =
+    !rawManha || isLegacyDefaultTemplate(rawManha, "manha")
+      ? ((upgraded = rawManha !== DEFAULT_TEMPLATES.defaultManha),
+        DEFAULT_TEMPLATES.defaultManha)
+      : rawManha;
+
+  const nextOverrides = Object.fromEntries(
+    Object.entries(loaded.groupOverrides || {}).map(([k, v]) => [
+      k,
+      upgradeTemplateGreeting(v),
+    ])
+  );
+
+  return {
+    templates: {
+      defaultNoite: nextNoite,
+      defaultManha: nextManha,
+      groupOverrides: nextOverrides,
+    },
+    upgraded,
+  };
+}
+
 function loadTemplates(): MessageTemplatesState {
   const loaded = loadJson<MessageTemplatesState>(
     STORAGE_TEMPLATES_KEY,
     DEFAULT_TEMPLATES
   );
-  return {
-    defaultNoite: upgradeTemplateGreeting(loaded.defaultNoite),
-    defaultManha: upgradeTemplateGreeting(loaded.defaultManha),
-    groupOverrides: Object.fromEntries(
-      Object.entries(loaded.groupOverrides || {}).map(([k, v]) => [
-        k,
-        upgradeTemplateGreeting(v),
-      ])
-    ),
-  };
+  return upgradeTemplatesState(loaded).templates;
 }
 
 export default function App() {
@@ -360,22 +398,18 @@ export default function App() {
           cloudLinks
         );
 
-        skipNextCloudPushRef.current = true;
+        const upgradedCloudTemplates = cloudTemplates
+          ? upgradeTemplatesState(cloudTemplates)
+          : null;
+
+        skipNextCloudPushRef.current = !upgradedCloudTemplates?.upgraded;
         hasHydratedCloudRef.current = true;
         setEntries(hydrated.entries);
         setContactBook(mergedBook);
         setContactNames(mergedNames);
         setContactLinks(cloudLinks);
-        if (cloudTemplates) {
-          setTemplates({
-            defaultNoite: upgradeTemplateGreeting(cloudTemplates.defaultNoite),
-            defaultManha: upgradeTemplateGreeting(cloudTemplates.defaultManha),
-            groupOverrides: Object.fromEntries(
-              Object.entries(cloudTemplates.groupOverrides || {}).map(
-                ([k, v]) => [k, upgradeTemplateGreeting(v)]
-              )
-            ),
-          });
+        if (upgradedCloudTemplates) {
+          setTemplates(upgradedCloudTemplates.templates);
         }
       } catch (err) {
         setSyncError(

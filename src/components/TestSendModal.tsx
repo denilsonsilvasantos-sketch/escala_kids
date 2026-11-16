@@ -23,6 +23,7 @@ import {
   getGreetingByTime,
   getTemplateForGroup,
   getUpcomingSundays,
+  isFirstSundayOfMonth,
   renderScheduleMessage,
 } from "../utils/dateAndMessage";
 import { WhatsAppPreviewCard } from "./WhatsAppPreviewCard";
@@ -231,11 +232,13 @@ export function TestSendModal({
                 {!upcomingSundays.includes(testDateISO) && (
                   <option value={testDateISO}>
                     Domingo {formatDateDDMM(testDateISO)}
+                    {isFirstSundayOfMonth(testDateISO) ? " · Santa Ceia" : ""}
                   </option>
                 )}
                 {upcomingSundays.map((s) => (
                   <option key={s} value={s}>
                     Domingo {formatDateDDMM(s)}
+                    {isFirstSundayOfMonth(s) ? " · Santa Ceia" : ""}
                   </option>
                 ))}
               </select>
