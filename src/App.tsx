@@ -8,6 +8,7 @@ import { QuickAddModal } from "./components/QuickAddModal";
 import { CloudSyncModal } from "./components/CloudSyncModal";
 import { ContactMatchModal } from "./components/ContactMatchModal";
 import { VolunteersView } from "./components/VolunteersView";
+import { TestSendModal } from "./components/TestSendModal";
 import {
   DEFAULT_TEMPLATES,
   EXTRA_IMAGE_ENTRIES_15_11,
@@ -166,6 +167,7 @@ export default function App() {
   }>({ isOpen: false, shift: "noite" });
 
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [isTestSendOpen, setIsTestSendOpen] = useState(false);
   const [pendingContactMatches, setPendingContactMatches] = useState<
     PendingContactMatch[]
   >([]);
@@ -1143,6 +1145,7 @@ export default function App() {
             void pullStateFromCloud(false);
           }
         }}
+        onOpenTestSend={() => setIsTestSendOpen(true)}
       />
 
       <main className="flex-1 pb-20 md:pb-6">
@@ -1181,6 +1184,7 @@ export default function App() {
             contactBook={contactBook}
             contactLinks={contactLinks}
             onReplaceVolunteer={handleReplaceVolunteer}
+            onOpenTestSend={() => setIsTestSendOpen(true)}
           />
         )}
 
@@ -1255,6 +1259,13 @@ export default function App() {
         syncError={syncError}
         needsSchemaSetup={needsSchemaSetup}
         onRefreshFromCloud={() => pullStateFromCloud(false)}
+      />
+
+      <TestSendModal
+        isOpen={isTestSendOpen}
+        onClose={() => setIsTestSendOpen(false)}
+        sundayISO={sundayISO}
+        templates={templates}
       />
     </div>
   );

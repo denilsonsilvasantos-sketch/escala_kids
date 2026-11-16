@@ -21,6 +21,7 @@ import {
   FileSpreadsheet,
   FileText,
   Eye,
+  FlaskConical,
 } from "lucide-react";
 import type {
   ContactLink,
@@ -75,6 +76,7 @@ interface ScheduleWorkspaceProps {
   onReplaceVolunteer: (entryId: string, newName: string, newPhone: string) => void;
   onCommitName?: (entryId: string, name: string) => void;
   onCommitPhone?: (entryId: string, phone: string) => void;
+  onOpenTestSend: () => void;
 }
 
 const CATEGORY_LABELS: Record<GroupCategory, string> = {
@@ -119,6 +121,7 @@ export function ScheduleWorkspace({
   onReplaceVolunteer,
   onCommitName,
   onCommitPhone,
+  onOpenTestSend,
 }: ScheduleWorkspaceProps) {
   const [shiftFilter, setShiftFilter] = useState<"todos" | ShiftType>("noite");
   const [statusFilter, setStatusFilter] = useState<StatusFilterType>("todos");
@@ -768,6 +771,19 @@ export function ScheduleWorkspace({
                   </button>
                 </div>
               )}
+
+              <span className="text-zinc-300" aria-hidden="true">
+                ·
+              </span>
+
+              <button
+                type="button"
+                onClick={onOpenTestSend}
+                className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium rounded-md border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 transition-colors cursor-pointer"
+              >
+                <FlaskConical className="w-3 h-3 text-amber-700" />
+                <span>Envio teste (qualquer dia)</span>
+              </button>
 
               <span className="text-zinc-300" aria-hidden="true">
                 ·

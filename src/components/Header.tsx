@@ -6,6 +6,7 @@ import {
   ImageUp,
   RefreshCw,
   Users,
+  FlaskConical,
 } from "lucide-react";
 import type { AppView } from "../types/schedule";
 
@@ -17,6 +18,7 @@ interface HeaderProps {
   onOpenBatchModal: () => void;
   onOpenQuickAdd: () => void;
   onOpenSyncModal: () => void;
+  onOpenTestSend: () => void;
 }
 
 export function Header({
@@ -27,6 +29,7 @@ export function Header({
   onOpenBatchModal,
   onOpenQuickAdd,
   onOpenSyncModal,
+  onOpenTestSend,
 }: HeaderProps) {
   const navItems: {
     id: AppView;
@@ -102,8 +105,18 @@ export function Header({
             })}
           </nav>
 
-          {/* Actions: Sync + Primary Action */}
+          {/* Actions: Test Send + Sync + Primary Action */}
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenTestSend}
+              title="Envio teste para aprender e testar qualquer dia"
+              className="h-9 min-w-[40px] inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 text-xs font-medium border border-amber-200 text-amber-900 bg-amber-50 hover:bg-amber-100 rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
+            >
+              <FlaskConical className="w-3.5 h-3.5 shrink-0 text-amber-700" />
+              <span className="hidden sm:inline">Envio teste</span>
+            </button>
+
             <button
               type="button"
               onClick={onOpenSyncModal}
