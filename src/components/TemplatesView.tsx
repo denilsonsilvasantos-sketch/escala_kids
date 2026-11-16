@@ -71,14 +71,16 @@ export function TemplatesView({
     ROLE_TEMPLATE_KEYS.professor
   );
   const [previewShift, setPreviewShift] = useState<ShiftType>("noite");
-  const [previewDateISO, setPreviewDateISO] = useState<string>(activeSundayISO);
+  const upcomingSundays = useMemo(
+    () => getUpcomingSundays(undefined, 5),
+    []
+  );
+  const [previewDateISO, setPreviewDateISO] = useState<string>(() => {
+    const firstFuture = getUpcomingSundays(undefined, 1)[0];
+    return activeSundayISO >= firstFuture ? activeSundayISO : firstFuture;
+  });
   const [testHour, setTestHour] = useState<number>(() => new Date().getHours());
   const [copiedPreview, setCopiedPreview] = useState(false);
-
-  const upcomingSundays = useMemo(
-    () => getUpcomingSundays(activeSundayISO, 5),
-    [activeSundayISO]
-  );
 
   const activeRoleMeta = useMemo(
     () => ROLE_TARGETS.find((r) => r.id === selectedTarget) || null,

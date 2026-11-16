@@ -70,9 +70,14 @@ export function Header({
           <button
             type="button"
             onClick={() => onChangeView("escala")}
-            className="font-display text-lg font-bold tracking-tight text-zinc-950 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 rounded"
+            aria-label="MEVAM Kids Sede — Ir para Escala"
+            className="inline-flex items-center shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 rounded-md py-1"
           >
-            Escala Kids
+            <img
+              src="/assets/aistudio/Logo_Mevam_Kids_9ca1d5e7.png"
+              alt="MEVAM Kids Sede"
+              className="h-8 sm:h-9 w-auto object-contain select-none"
+            />
           </button>
 
           {/* Desktop 4-link Navigation */}

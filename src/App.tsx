@@ -13,7 +13,6 @@ import {
   DEFAULT_TEMPLATES,
   EXTRA_IMAGE_ENTRIES_15_11,
   INITIAL_ENTRIES,
-  INITIAL_SCHEDULE_DATE,
   SCHEDULE_GROUPS,
 } from "./data/initialData";
 import type {
@@ -28,7 +27,10 @@ import type {
   ShiftType,
   VolunteerStatus,
 } from "./types/schedule";
-import { getConfirmationWindowInfo } from "./utils/dateAndMessage";
+import {
+  getConfirmationWindowInfo,
+  getCurrentOrNextSundayISO,
+} from "./utils/dateAndMessage";
 import {
   findPendingMatchForName,
   formatVolunteerName,
@@ -172,7 +174,9 @@ function loadTemplates(): MessageTemplatesState {
 
 export default function App() {
   const [activeView, setActiveView] = useState<AppView>("escala");
-  const [sundayISO, setSundayISO] = useState<string>(INITIAL_SCHEDULE_DATE);
+  const [sundayISO, setSundayISO] = useState<string>(() =>
+    getCurrentOrNextSundayISO()
+  );
 
   const [entries, setEntries] = useState<ScheduleEntry[]>(loadEntries);
   const [templates, setTemplates] =

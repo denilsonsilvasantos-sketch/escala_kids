@@ -60,11 +60,20 @@ export function addDaysISO(isoDate: string, days: number): string {
 }
 
 /**
- * Returns upcoming Sundays starting from a reference Sunday (default 2026-11-15).
+ * Returns today (if Sunday) or the next upcoming Sunday in YYYY-MM-DD local time.
  */
-export function getUpcomingSundays(startSundayISO = "2026-11-15", count = 5): string[] {
+export function getCurrentOrNextSundayISO(now: Date = new Date()): string {
+  return snapToSunday(toLocalISODate(now));
+}
+
+/**
+ * Returns upcoming Sundays starting from today/next Sunday (never past dates).
+ */
+export function getUpcomingSundays(startSundayISO?: string, count = 5): string[] {
+  const minFutureSunday = getCurrentOrNextSundayISO();
+  const candidate = startSundayISO ? snapToSunday(startSundayISO) : minFutureSunday;
+  const base = candidate < minFutureSunday ? minFutureSunday : candidate;
   const list: string[] = [];
-  const base = snapToSunday(startSundayISO);
   for (let i = 0; i < count; i++) {
     list.push(addDaysISO(base, i * 7));
   }

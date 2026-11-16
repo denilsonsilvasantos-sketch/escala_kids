@@ -161,10 +161,21 @@ export function ScheduleWorkspace({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [mobilePreviewEntryId]);
 
+  const todayBucketKey = `${nowTick.getFullYear()}-${nowTick.getMonth()}-${nowTick.getDate()}`;
   const upcomingSundays = useMemo(
-    () => getUpcomingSundays("2026-11-15", 5),
-    []
+    () => getUpcomingSundays(undefined, 5),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [todayBucketKey]
   );
+
+  const latestPopulatedSourceISO = useMemo(() => {
+    const datesWithEntries = Array.from(
+      new Set(entries.map((e) => e.date).filter((d) => d && d !== sundayISO))
+    ).sort();
+    return datesWithEntries.length > 0
+      ? datesWithEntries[datesWithEntries.length - 1]
+      : null;
+  }, [entries, sundayISO]);
 
   const windowInfo = useMemo(
     () => getConfirmationWindowInfo(sundayISO, nowTick),
@@ -1106,7 +1117,7 @@ export function ScheduleWorkspace({
             </div>
           </div>
 
-          {dayEntries.length === 0 && sundayISO !== "2026-11-15" && (
+          {dayEntries.length === 0 && latestPopulatedSourceISO && (
             <div className="bg-white border border-[#E5E3DB] rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h3 className="font-display text-sm font-semibold text-zinc-950">
@@ -1114,16 +1125,18 @@ export function ScheduleWorkspace({
                 </h3>
                 <p className="text-xs text-zinc-600 mt-0.5">
                   Escale abaixo, importe a coluna {dateDDMM} na aba{" "}
-                  <span className="font-medium">Importar Imagem</span> ou copie a escala base de 15/11.
+                  <span className="font-medium">Importar Imagem</span> ou copie a última escala cadastrada.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => onDuplicateFromDate("2026-11-15", sundayISO)}
+                onClick={() =>
+                  onDuplicateFromDate(latestPopulatedSourceISO, sundayISO)
+                }
                 className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium bg-zinc-900 text-white hover:bg-zinc-800 rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer"
               >
                 <CopyPlus className="w-4 h-4" />
-                <span>Copiar escala base de 15/11</span>
+                <span>Copiar última escala</span>
               </button>
             </div>
           )}

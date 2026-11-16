@@ -66,14 +66,15 @@ export function TestSendModal({
   const [copied, setCopied] = useState(false);
 
   const upcomingSundays = useMemo(
-    () => getUpcomingSundays("2026-11-15", 5),
+    () => getUpcomingSundays(undefined, 5),
     []
   );
 
   useEffect(() => {
     if (!isOpen) return;
-    setTestDateISO(sundayISO);
-  }, [isOpen, sundayISO]);
+    const firstFuture = upcomingSundays[0];
+    setTestDateISO(sundayISO >= firstFuture ? sundayISO : firstFuture);
+  }, [isOpen, sundayISO, upcomingSundays]);
 
   useEffect(() => {
     if (!isOpen) return;

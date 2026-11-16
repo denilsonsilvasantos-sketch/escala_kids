@@ -64,7 +64,7 @@ export function ImageImporterView({
   const [appliedSuccess, setAppliedSuccess] = useState(false);
   const resultsRef = useRef<HTMLDivElement | null>(null);
 
-  const upcomingSundays = getUpcomingSundays("2026-11-15", 5);
+  const upcomingSundays = getUpcomingSundays(undefined, 5);
   const groupsById: Record<string, GroupDefinition> = Object.fromEntries(
     SCHEDULE_GROUPS.map((g) => [g.id, g])
   );
@@ -222,7 +222,7 @@ export function ImageImporterView({
           Importar Escala por Imagem
         </h1>
         <p className="text-sm text-zinc-600 mt-1">
-          Envie a foto ou print da planilha de escalas do mês e selecione qual domingo deseja preencher automaticamente. A escala de 15/11 já está carregada.
+          Envie a foto ou print da planilha de escalas do mês e selecione qual domingo deseja preencher automaticamente.
         </p>
       </div>
 
