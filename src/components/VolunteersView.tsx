@@ -644,77 +644,102 @@ export function VolunteersView({
                   return (
                     <div
                       key={person.primaryKey}
-                      className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#FCFBF8] transition-colors"
+                      className="px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#FAF9F5] transition-colors"
                     >
-                      <div className="min-w-0 flex-1">
-                        {isEditingThis ? (
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="text"
-                              autoFocus
-                              value={editingNameDraft}
-                              onChange={(e) => setEditingNameDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  commitEdit();
-                                } else if (e.key === "Escape") {
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div
+                          className={`w-9 h-9 rounded-full border flex items-center justify-center text-xs font-semibold tracking-tight shrink-0 ${
+                            person.phone.trim()
+                              ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                              : "bg-[#F4F2EC] text-zinc-700 border-[#E5E3DB]"
+                          }`}
+                          aria-hidden="true"
+                        >
+                          {person.displayName
+                            .trim()
+                            .split(/\s+/)
+                            .filter(Boolean)
+                            .slice(0, 2)
+                            .map((p) => p[0]?.toUpperCase() || "")
+                            .join("") || "?"}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          {isEditingThis ? (
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                autoFocus
+                                value={editingNameDraft}
+                                onChange={(e) => setEditingNameDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    commitEdit();
+                                  } else if (e.key === "Escape") {
+                                    setEditingKey(null);
+                                    setEditingNameDraft("");
+                                  }
+                                }}
+                                className="flex-1 min-w-0 px-2.5 py-1.5 text-sm font-semibold text-zinc-900 bg-white border border-emerald-700 rounded-lg focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={commitEdit}
+                                title="Salvar nome"
+                                aria-label="Salvar nome"
+                                className="min-h-[34px] min-w-[34px] inline-flex items-center justify-center bg-emerald-700 text-white hover:bg-emerald-800 rounded-lg transition-colors cursor-pointer shrink-0"
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
                                   setEditingKey(null);
                                   setEditingNameDraft("");
-                                }
-                              }}
-                              className="flex-1 min-w-0 px-2.5 py-1.5 text-sm font-semibold text-zinc-900 bg-white border border-emerald-700 rounded-lg focus:outline-none"
-                            />
-                            <button
-                              type="button"
-                              onClick={commitEdit}
-                              title="Salvar nome"
-                              aria-label="Salvar nome"
-                              className="min-h-[34px] min-w-[34px] inline-flex items-center justify-center bg-emerald-700 text-white hover:bg-emerald-800 rounded-lg transition-colors cursor-pointer shrink-0"
-                            >
-                              <Check className="w-4 h-4" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingKey(null);
-                                setEditingNameDraft("");
-                              }}
-                              title="Cancelar edição"
-                              aria-label="Cancelar edição"
-                              className="min-h-[34px] min-w-[34px] inline-flex items-center justify-center bg-[#F4F2EC] text-zinc-700 hover:bg-[#EAE6DC] rounded-lg transition-colors cursor-pointer shrink-0"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="text-sm font-semibold text-zinc-900 truncate">
-                              {person.displayName}
+                                }}
+                                title="Cancelar edição"
+                                aria-label="Cancelar edição"
+                                className="min-h-[34px] min-w-[34px] inline-flex items-center justify-center bg-[#F4F2EC] text-zinc-700 hover:bg-[#EAE6DC] rounded-lg transition-colors cursor-pointer shrink-0"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingKey(person.primaryKey);
-                                setEditingNameDraft(person.displayName);
-                              }}
-                              title={`Editar nome de ${person.displayName}`}
-                              aria-label={`Editar nome de ${person.displayName}`}
-                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-zinc-600 hover:text-emerald-800 bg-[#F4F2EC] hover:bg-emerald-50 border border-[#E8E6DF] hover:border-emerald-200 rounded-md transition-colors cursor-pointer shrink-0"
-                            >
-                              <Pencil className="w-3 h-3" />
-                              <span>Editar</span>
-                            </button>
+                          ) : (
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="text-[14.5px] font-semibold text-zinc-950 truncate">
+                                {person.displayName}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingKey(person.primaryKey);
+                                  setEditingNameDraft(person.displayName);
+                                }}
+                                title={`Editar nome de ${person.displayName}`}
+                                aria-label={`Editar nome de ${person.displayName}`}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 hover:text-emerald-800 bg-[#F4F2EC] hover:bg-emerald-50 border border-[#E5E3DB] hover:border-emerald-200 rounded-md transition-colors cursor-pointer shrink-0"
+                              >
+                                <Pencil className="w-3 h-3" />
+                                <span>Editar</span>
+                              </button>
+                            </div>
+                          )}
+                          <div className="text-xs mt-0.5 truncate">
+                            {person.aliases.length > 0 ? (
+                              <span className="text-emerald-700">
+                                Também vinculado a: {person.aliases.join(", ")}
+                              </span>
+                            ) : person.phone.trim() ? (
+                              <span className="text-zinc-500">WhatsApp vinculado</span>
+                            ) : (
+                              <span className="text-amber-700">Sem WhatsApp cadastrado</span>
+                            )}
                           </div>
-                        )}
-                        {person.aliases.length > 0 && (
-                          <div className="text-[11px] text-emerald-700 mt-0.5">
-                            Também vinculado a: {person.aliases.join(", ")}
-                          </div>
-                        )}
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                      <div className="flex items-center gap-2 w-full sm:w-auto pl-12 sm:pl-0">
                         <VolunteerPhoneInput
                           initialPhone={person.phone}
                           onCommit={(val) =>

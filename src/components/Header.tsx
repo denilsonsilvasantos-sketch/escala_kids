@@ -65,19 +65,19 @@ export function Header({
 
   return (
     <>
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-[#E8E6DF]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 md:h-16 flex items-center justify-between gap-3 md:gap-8">
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-[#E5E3DB]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4 md:gap-8">
           <button
             type="button"
             onClick={() => onChangeView("escala")}
-            className="font-display text-lg font-bold tracking-tight text-zinc-900 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 rounded"
+            className="font-display text-lg font-bold tracking-tight text-zinc-950 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 rounded"
           >
             Escala Kids
           </button>
 
           {/* Desktop 4-link Navigation */}
           <nav
-            className="hidden md:flex items-center gap-7"
+            className="hidden md:flex items-center gap-7 h-full"
             aria-label="Navegação principal"
           >
             {navItems.map((item) => {
@@ -87,16 +87,16 @@ export function Header({
                   key={item.id}
                   type="button"
                   onClick={() => onChangeView(item.id)}
-                  className={`relative py-2 text-sm font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 rounded ${
+                  className={`relative h-full inline-flex items-center text-sm font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 ${
                     isActive
-                      ? "text-zinc-900"
+                      ? "text-zinc-950 font-semibold"
                       : "text-zinc-500 hover:text-zinc-900"
                   }`}
                 >
-                  {item.label}
+                  <span>{item.label}</span>
                   {isActive && (
                     <span
-                      className="absolute inset-x-0 -bottom-[17px] h-0.5 bg-emerald-700"
+                      className="absolute inset-x-0 bottom-0 h-[2px] bg-emerald-700 rounded-t-full"
                       aria-hidden="true"
                     />
                   )}
@@ -111,7 +111,7 @@ export function Header({
               type="button"
               onClick={onOpenTestSend}
               title="Envio teste para aprender e testar qualquer dia"
-              className="h-9 min-w-[40px] inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 text-xs font-medium border border-amber-200 text-amber-900 bg-amber-50 hover:bg-amber-100 rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
+              className="h-9 min-w-[40px] inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 text-xs font-medium border border-amber-200/90 text-amber-900 bg-amber-50/80 hover:bg-amber-100/90 rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
             >
               <FlaskConical className="w-3.5 h-3.5 shrink-0 text-amber-700" />
               <span className="hidden sm:inline">Envio teste</span>
@@ -121,9 +121,9 @@ export function Header({
               type="button"
               onClick={onOpenSyncModal}
               title="Sincronização Supabase"
-              className="h-9 min-w-[40px] inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 text-xs font-medium border border-[#E8E6DF] text-zinc-700 bg-white hover:bg-[#FAF9F5] rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+              className="h-9 min-w-[40px] inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 text-xs font-medium border border-[#E5E3DB] text-zinc-700 bg-white hover:bg-[#FAF9F5] rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
             >
-              <RefreshCw className="w-3.5 h-3.5 shrink-0 text-zinc-600" />
+              <RefreshCw className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
               <span className="hidden sm:inline">Sincronizar</span>
             </button>
 
@@ -132,9 +132,9 @@ export function Header({
                 type="button"
                 onClick={onOpenBatchModal}
                 disabled={!canDispatch}
-                className={`inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 ${
+                className={`h-9 inline-flex items-center gap-2 px-3.5 sm:px-4 text-xs sm:text-sm font-medium rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 ${
                   canDispatch
-                    ? "bg-emerald-700 text-white hover:bg-emerald-800"
+                    ? "bg-emerald-700 text-white hover:bg-emerald-800 shadow-xs"
                     : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
                 }`}
               >
@@ -147,7 +147,7 @@ export function Header({
               <button
                 type="button"
                 onClick={onOpenQuickAdd}
-                className="inline-flex items-center gap-1.5 sm:gap-2 px-3.5 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900"
+                className="h-9 inline-flex items-center gap-1.5 sm:gap-2 px-3.5 sm:px-4 text-xs sm:text-sm font-medium rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900 shadow-xs"
               >
                 <Plus className="w-4 h-4 shrink-0" />
                 <span className="sm:hidden">Voluntário</span>
@@ -161,7 +161,7 @@ export function Header({
       {/* Mobile Fixed Bottom Navigation Bar */}
       <nav
         aria-label="Navegação inferior"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E8E6DF] grid grid-cols-4 h-14 pb-[env(safe-area-inset-bottom)]"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E5E3DB] grid grid-cols-4 h-14 pb-[env(safe-area-inset-bottom)]"
       >
         {navItems.map((item) => {
           const Icon = item.icon;

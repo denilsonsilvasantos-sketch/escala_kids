@@ -39,6 +39,7 @@ import {
   formatPhoneDisplay,
   getConfirmationWindowInfo,
   getGreetingByTime,
+  getPrayerTimeForShift,
   getTemplateForGroup,
   getUpcomingSundays,
   isFirstSundayOfMonth,
@@ -97,6 +98,13 @@ const CATEGORY_ORDER: GroupCategory[] = [
   "apoio",
   "lideranca",
 ];
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] || ""}${parts[parts.length - 1][0] || ""}`.toUpperCase();
+}
 
 export function ScheduleWorkspace({
   sundayISO,
@@ -166,6 +174,7 @@ export function ScheduleWorkspace({
   const canSendNow = windowInfo.isUnlocked || earlyOverride;
   const dateDDMM = formatDateDDMM(sundayISO);
   const currentGreeting = getGreetingByTime(nowTick);
+  const santaCeiaSunday = isFirstSundayOfMonth(sundayISO);
 
   const dayEntries = useMemo(
     () => entries.filter((e) => e.date === sundayISO),
@@ -334,201 +343,241 @@ export function ScheduleWorkspace({
     const shiftGroups = groupsToDisplay.filter((g) => g.shift === shift);
     if (shiftGroups.length === 0) return null;
 
-    const shiftCount = dayEntries.filter((e) => e.shift === shift).length;
+    const shiftEntries = dayEntries.filter((e) => e.shift === shift);
+    const shiftCount = shiftEntries.length;
+    const shiftConfirmed = shiftEntries.filter(
+      (e) => e.status === "confirmado"
+    ).length;
+    const prayerTime = getPrayerTimeForShift(shift);
 
-    return (
-      <section
-        key={shift}
-        className="bg-white border border-[#E8E6DF] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] overflow-hidden"
-      >
-        <div className="px-6 py-4 border-b border-[#EFECE4] flex items-center justify-between gap-4 bg-[#FAF9F5]">
-          <div className="flex items-baseline gap-3">
-            <h2 className="font-display text-base font-bold text-zinc-900">
-              {title}
-            </h2>
-            <span className="text-xs text-zinc-500 font-mono-tabular">
-              {shiftCount} {shiftCount === 1 ? "voluntário" : "voluntários"}
-            </span>
+    const visibleCategoryCards = CATEGORY_ORDER.map((category) => {
+      const catGroups = shiftGroups.filter((g) => g.category === category);
+      if (catGroups.length === 0) return null;
+
+      const hasFilterActive = Boolean(searchQuery.trim() || statusFilter !== "todos");
+      const hasAnyEntries = catGroups.some(
+        (g) => (entriesByGroupId[g.id] || []).length > 0
+      );
+      if (hasFilterActive && !hasAnyEntries) return null;
+
+      const catGroupIds = new Set(catGroups.map((g) => g.id));
+      const catEntriesAll = shiftEntries.filter((e) =>
+        catGroupIds.has(e.groupId)
+      );
+      const catConfirmed = catEntriesAll.filter(
+        (e) => e.status === "confirmado"
+      ).length;
+
+      return (
+        <div
+          key={category}
+          className="bg-white border border-[#E5E3DB] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.025)] overflow-hidden"
+        >
+          {/* Category Card Header */}
+          <div className="px-5 py-3 bg-[#FAF9F5] border-b border-[#E8E6DF] flex items-center justify-between gap-3">
+            <h3 className="font-display text-[13px] font-bold tracking-tight text-zinc-900">
+              {CATEGORY_LABELS[category]}
+            </h3>
+            <div className="text-xs font-mono-tabular text-zinc-500 whitespace-nowrap">
+              {catEntriesAll.length > 0 ? (
+                <>
+                  <span>
+                    {catEntriesAll.length}{" "}
+                    {catEntriesAll.length === 1 ? "escalado" : "escalados"}
+                  </span>
+                  {catConfirmed > 0 && (
+                    <>
+                      <span className="mx-1.5 text-zinc-300" aria-hidden="true">
+                        ·
+                      </span>
+                      <span className="text-emerald-700 font-medium">
+                        {catConfirmed} confirmado{catConfirmed === 1 ? "" : "s"}
+                      </span>
+                    </>
+                  )}
+                </>
+              ) : (
+                <span>{catGroups.length} funções</span>
+              )}
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => onOpenAddForGroup(shift, shiftGroups[0]?.id || "")}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 whitespace-nowrap cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Adicionar neste culto</span>
-          </button>
-        </div>
 
-        <div className="divide-y divide-[#EFECE4]">
-          {CATEGORY_ORDER.map((category) => {
-            const catGroups = shiftGroups.filter(
-              (g) => g.category === category
-            );
-            if (catGroups.length === 0) return null;
+          {/* Groups / Turmas inside Category */}
+          <div className="divide-y divide-[#E8E6DF]">
+            {catGroups.map((group) => {
+              const groupEntries = entriesByGroupId[group.id] || [];
+              if (groupEntries.length === 0 && hasFilterActive) {
+                return null;
+              }
 
-            // Check if anything is visible when searching or filtering status
-            const hasAnyEntries = catGroups.some(
-              (g) => (entriesByGroupId[g.id] || []).length > 0
-            );
-            if (!hasAnyEntries && (searchQuery.trim() || statusFilter !== "todos")) {
-              return null;
-            }
+              const template = getTemplateForGroup(templates, group);
+              const message = renderScheduleMessage(template, {
+                sundayISO,
+                shift: group.shift,
+                groupLabel: group.label,
+              });
 
-            return (
-              <div key={category}>
-                <div className="px-6 py-2 bg-[#FCFBF8] border-b border-[#F2EFE8] text-[11px] font-semibold text-zinc-500 tracking-wide">
-                  {CATEGORY_LABELS[category]}
-                </div>
+              return (
+                <div key={group.id}>
+                  {/* Group / Turma Header Bar */}
+                  <div className="px-5 py-2 bg-[#FCFBF8] border-b border-[#F2F0E9] flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-semibold text-zinc-700 truncate">
+                        {group.label}
+                      </span>
+                      <span className="text-zinc-300 text-xs" aria-hidden="true">
+                        ·
+                      </span>
+                      {groupEntries.length === 0 ? (
+                        <span className="text-xs text-zinc-400 whitespace-nowrap">
+                          Vaga em aberto
+                        </span>
+                      ) : (
+                        <span className="text-xs font-mono-tabular text-zinc-500 whitespace-nowrap">
+                          {groupEntries.length}{" "}
+                          {groupEntries.length === 1 ? "pessoa" : "pessoas"}
+                        </span>
+                      )}
+                    </div>
 
-                <div className="divide-y divide-[#F4F2EC]">
-                  {catGroups.map((group) => {
-                    const groupEntries = entriesByGroupId[group.id] || [];
-                    const template = getTemplateForGroup(templates, group);
-                    const message = renderScheduleMessage(template, {
-                      sundayISO,
-                      shift: group.shift,
-                      groupLabel: group.label,
-                    });
+                    <button
+                      type="button"
+                      onClick={() => onOpenAddForGroup(group.shift, group.id)}
+                      title={`Adicionar voluntário em ${group.label}`}
+                      aria-label={`Adicionar voluntário em ${group.label}`}
+                      className="h-7 inline-flex items-center gap-1 px-2.5 text-[11px] font-medium text-emerald-800 bg-emerald-50/80 hover:bg-emerald-100 border border-emerald-200/90 rounded-md whitespace-nowrap shrink-0 transition-colors duration-150 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{groupEntries.length === 0 ? "Escalar" : "Adicionar"}</span>
+                    </button>
+                  </div>
 
-                    if (groupEntries.length === 0) {
-                      if (searchQuery.trim() || statusFilter !== "todos") {
-                        return null;
-                      }
-                      return (
-                        <div
-                          key={group.id}
-                          className="px-6 py-3 flex items-center justify-between gap-4 hover:bg-[#FAF9F5] transition-colors"
-                        >
-                          <div className="flex items-center gap-3.5 min-w-0">
-                            <span className="w-4 shrink-0" aria-hidden="true" />
-                            <div className="min-w-0">
-                              <span className="text-sm font-medium text-zinc-600">
-                                {group.label}
-                              </span>
-                              <span className="text-xs text-zinc-400 ml-2">
-                                · Vaga em aberto
-                              </span>
-                            </div>
-                          </div>
+                  {/* Volunteer Rows for this Group */}
+                  {groupEntries.length > 0 && (
+                    <div className="divide-y divide-[#F3F1EA]">
+                      {groupEntries.map((entry) => {
+                        const waUrl = buildWhatsAppUrl(entry.phone, message);
+                        const isSelected = Boolean(selectedIds[entry.id]);
+                        const isFocused = previewEntry?.id === entry.id;
+                        const isEditingName =
+                          editingField?.id === entry.id &&
+                          editingField.field === "name";
+                        const isEditingPhone =
+                          editingField?.id === entry.id &&
+                          editingField.field === "phone";
+                        const hasPhone = entry.phone.trim().length > 0;
 
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onOpenAddForGroup(group.shift, group.id)
-                            }
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:text-zinc-900 bg-[#F4F2EC] hover:bg-[#EAE6DC] rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                        const avatarClass =
+                          entry.status === "confirmado"
+                            ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                            : entry.status === "recusado"
+                              ? "bg-red-50 text-red-700 border-red-200"
+                              : "bg-[#F4F2EC] text-zinc-700 border-[#E5E3DB]";
+
+                        return (
+                          <div
+                            key={entry.id}
+                            onClick={() => setFocusedEntryId(entry.id)}
+                            className={`px-5 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 transition-colors duration-150 cursor-pointer ${
+                              isFocused
+                                ? "bg-emerald-50/45"
+                                : "hover:bg-[#FAF9F5]"
+                            }`}
                           >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Escalar</span>
-                          </button>
-                        </div>
-                      );
-                    }
+                            {/* Left: Checkbox + Monogram + Standardized 2-line Identity & Contact */}
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={() => onToggleSelect(entry.id)}
+                                aria-label={`Selecionar ${entry.volunteerName} (${group.label})`}
+                                className="w-4 h-4 rounded border-zinc-300 text-emerald-700 focus:ring-emerald-700 shrink-0 cursor-pointer"
+                              />
 
-                    return groupEntries.map((entry, idx) => {
-                      const waUrl = buildWhatsAppUrl(entry.phone, message);
-                      const isSelected = Boolean(selectedIds[entry.id]);
-                      const isFocused = previewEntry?.id === entry.id;
-                      const isEditingName =
-                        editingField?.id === entry.id &&
-                        editingField.field === "name";
-                      const isEditingPhone =
-                        editingField?.id === entry.id &&
-                        editingField.field === "phone";
-
-                      return (
-                        <div
-                          key={entry.id}
-                          onClick={() => setFocusedEntryId(entry.id)}
-                          className={`px-6 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors cursor-pointer ${
-                            isFocused
-                              ? "bg-emerald-50/50"
-                              : "hover:bg-[#FAF9F5]"
-                          }`}
-                        >
-                          {/* Left: Checkbox + Group + Clean Click-to-Edit Name & Phone */}
-                          <div className="flex items-start sm:items-center gap-3.5 min-w-0 flex-1">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={() => onToggleSelect(entry.id)}
-                              aria-label={`Selecionar ${entry.volunteerName} (${group.label})`}
-                              className="w-4 h-4 mt-1 sm:mt-0 rounded border-zinc-300 text-emerald-700 focus:ring-emerald-700 shrink-0 cursor-pointer"
-                            />
-
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                                <span className="text-xs font-medium text-zinc-500">
-                                  {group.label}
-                                </span>
-                                {idx === 0 && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      onOpenAddForGroup(group.shift, group.id);
-                                    }}
-                                    title={`Adicionar mais um voluntário em ${group.label}`}
-                                    aria-label={`Adicionar voluntário em ${group.label}`}
-                                    className="inline-flex items-center justify-center w-6 h-6 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors cursor-pointer"
-                                  >
-                                    <Plus className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                                {entry.messageSent &&
-                                  entry.status === "pendente" && (
-                                    <span className="text-[11px] font-medium text-sky-700">
-                                      · Enviada (aguardando resposta)
-                                    </span>
-                                  )}
-                                {!entry.messageSent &&
-                                  entry.status === "pendente" && (
-                                    <span className="text-[11px] font-medium text-zinc-400">
-                                      · Não enviada
-                                    </span>
-                                  )}
-                                {entry.status === "confirmado" && (
-                                  <span className="text-[11px] font-medium text-emerald-700">
-                                    · {entry.messageSent ? "Enviada · " : ""}
-                                    Confirmado
-                                  </span>
-                                )}
-                                {entry.status === "recusado" && (
-                                  <span className="text-[11px] font-medium text-red-700">
-                                    · Não poderá servir
-                                  </span>
-                                )}
+                              <div
+                                className={`w-9 h-9 rounded-full border flex items-center justify-center text-xs font-semibold tracking-tight shrink-0 ${avatarClass}`}
+                                aria-hidden="true"
+                              >
+                                {getInitials(entry.volunteerName)}
                               </div>
 
-                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
-                                {isEditingName ? (
-                                  <input
-                                    type="text"
-                                    autoFocus
-                                    value={entry.volunteerName}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onChange={(e) =>
-                                      onUpdateName(entry.id, e.target.value)
-                                    }
-                                    onBlur={() => {
-                                      setEditingField(null);
-                                      onCommitName?.(entry.id, entry.volunteerName);
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") {
+                              {/* Standardized 2-line block: Line 1 ALWAYS Name + Edit; Line 2 ALWAYS Contact + Status */}
+                              <div className="min-w-0 flex-1">
+                                {/* Line 1: Name + Edit */}
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {isEditingName ? (
+                                    <input
+                                      type="text"
+                                      autoFocus
+                                      value={entry.volunteerName}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onChange={(e) =>
+                                        onUpdateName(entry.id, e.target.value)
+                                      }
+                                      onBlur={() => {
                                         setEditingField(null);
                                         onCommitName?.(entry.id, entry.volunteerName);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          setEditingField(null);
+                                          onCommitName?.(entry.id, entry.volunteerName);
+                                        }
+                                      }}
+                                      className="w-full max-w-[240px] px-2 py-0.5 text-sm font-semibold text-zinc-900 bg-white border border-emerald-700 rounded-md focus:outline-none"
+                                    />
+                                  ) : (
+                                    <>
+                                      <span className="text-[14.5px] font-semibold text-zinc-950 truncate">
+                                        {entry.volunteerName}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setFocusedEntryId(entry.id);
+                                          setEditingField({
+                                            id: entry.id,
+                                            field: "name",
+                                          });
+                                        }}
+                                        title="Editar nome do voluntário"
+                                        aria-label={`Editar nome de ${entry.volunteerName}`}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 hover:text-emerald-800 bg-[#F4F2EC] hover:bg-emerald-50 border border-[#E5E3DB] hover:border-emerald-200 rounded-md whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                        <span>Editar</span>
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+
+                                {/* Line 2: Standardized WhatsApp Contact + Delivery/Confirmation Status */}
+                                <div className="flex items-center gap-2 mt-0.5 min-w-0 text-xs">
+                                  {isEditingPhone ? (
+                                    <input
+                                      type="tel"
+                                      autoFocus
+                                      value={entry.phone}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onChange={(e) =>
+                                        onUpdatePhone(entry.id, e.target.value)
                                       }
-                                    }}
-                                    className="px-2 py-0.5 text-sm font-semibold text-zinc-900 bg-white border border-emerald-700 rounded-md focus:outline-none"
-                                  />
-                                ) : (
-                                  <div className="inline-flex items-center gap-1.5">
-                                    <span className="text-[15px] font-semibold text-zinc-900">
-                                      {entry.volunteerName}
-                                    </span>
+                                      onBlur={() => {
+                                        setEditingField(null);
+                                        onCommitPhone?.(entry.id, entry.phone);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          setEditingField(null);
+                                          onCommitPhone?.(entry.id, entry.phone);
+                                        }
+                                      }}
+                                      placeholder="(47) 99999-9999"
+                                      className="w-36 px-2 py-0.5 text-xs font-mono-tabular text-zinc-800 bg-white border border-emerald-700 rounded-md focus:outline-none"
+                                    />
+                                  ) : (
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -536,193 +585,233 @@ export function ScheduleWorkspace({
                                         setFocusedEntryId(entry.id);
                                         setEditingField({
                                           id: entry.id,
-                                          field: "name",
+                                          field: "phone",
                                         });
                                       }}
-                                      title="Editar nome do voluntário"
-                                      aria-label={`Editar nome de ${entry.volunteerName}`}
-                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600 hover:text-emerald-800 bg-[#F4F2EC] hover:bg-emerald-50 border border-[#E8E6DF] hover:border-emerald-200 rounded-md transition-colors cursor-pointer"
+                                      title="Clique para editar o WhatsApp"
+                                      className={`inline-flex items-center gap-1.5 font-mono-tabular whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                                        hasPhone
+                                          ? "text-zinc-600 hover:text-zinc-950"
+                                          : "text-amber-700 hover:text-amber-900 font-medium"
+                                      }`}
                                     >
-                                      <Pencil className="w-3 h-3" />
-                                      <span>Editar</span>
+                                      <Phone
+                                        className={`w-3 h-3 shrink-0 ${
+                                          hasPhone ? "text-zinc-400" : "text-amber-600"
+                                        }`}
+                                      />
+                                      <span>
+                                        {hasPhone
+                                          ? formatPhoneDisplay(entry.phone)
+                                          : "Adicionar WhatsApp"}
+                                      </span>
                                     </button>
-                                  </div>
-                                )}
+                                  )}
 
-                                <span className="text-zinc-300" aria-hidden="true">
-                                  ·
-                                </span>
-
-                                {isEditingPhone ? (
-                                  <input
-                                    type="tel"
-                                    autoFocus
-                                    value={entry.phone}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onChange={(e) =>
-                                      onUpdatePhone(entry.id, e.target.value)
-                                    }
-                                    onBlur={() => {
-                                      setEditingField(null);
-                                      onCommitPhone?.(entry.id, entry.phone);
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") {
-                                        setEditingField(null);
-                                        onCommitPhone?.(entry.id, entry.phone);
-                                      }
-                                    }}
-                                    placeholder="(11) 99999-9999"
-                                    className="w-36 px-2 py-0.5 text-xs font-mono-tabular text-zinc-800 bg-white border border-emerald-700 rounded-md focus:outline-none"
-                                  />
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setFocusedEntryId(entry.id);
-                                      setEditingField({
-                                        id: entry.id,
-                                        field: "phone",
-                                      });
-                                    }}
-                                    className="inline-flex items-center gap-1 text-xs font-mono-tabular text-zinc-500 hover:text-zinc-900 cursor-pointer"
+                                  <span
+                                    className="text-zinc-300 shrink-0"
+                                    aria-hidden="true"
                                   >
-                                    <Phone className="w-3 h-3 text-zinc-400" />
-                                    <span>
-                                      {entry.phone.trim()
-                                        ? formatPhoneDisplay(entry.phone)
-                                        : "Adicionar WhatsApp"}
+                                    ·
+                                  </span>
+
+                                  {entry.status === "confirmado" ? (
+                                    <span className="text-[11.5px] font-medium text-emerald-700 truncate">
+                                      Confirmado
                                     </span>
-                                  </button>
-                                )}
+                                  ) : entry.status === "recusado" ? (
+                                    <span className="text-[11.5px] font-medium text-red-700 truncate">
+                                      Não poderá servir
+                                    </span>
+                                  ) : entry.messageSent ? (
+                                    <span className="text-[11.5px] font-medium text-sky-700 truncate">
+                                      Enviada · aguardando
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11.5px] text-zinc-400 truncate">
+                                      Não enviada
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
-                          </div>
 
-                          {/* Right: Confirmado + Recusado + Trocar + Prévia(mobile) + Copy + Send + Remove */}
-                          <div
-                            className="flex flex-wrap items-center justify-start sm:justify-end gap-1.5 shrink-0 pl-7 sm:pl-0"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onUpdateStatus(
-                                  entry.id,
-                                  entry.status === "confirmado"
-                                    ? "pendente"
-                                    : "confirmado"
-                                )
-                              }
-                              title="Marcar como confirmado"
-                              className={`h-10 sm:h-9 inline-flex items-center gap-1 px-2.5 text-xs font-medium rounded-lg border whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                                entry.status === "confirmado"
-                                  ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                                  : "bg-white text-zinc-700 border-[#E8E6DF] hover:bg-emerald-50/60 hover:text-emerald-800 hover:border-emerald-200"
-                              }`}
+                            {/* Right: Segmented Confirm/Decline + Trocar + Prévia(mobile) + Copy + Send + Remove */}
+                            <div
+                              className="flex flex-wrap sm:flex-nowrap items-center justify-start md:justify-end gap-1.5 shrink-0 pl-7 md:pl-0"
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              <Check className="w-3.5 h-3.5" />
-                              <span>Confirmado</span>
-                            </button>
+                              <div className="inline-flex items-center rounded-lg border border-[#E5E3DB] bg-white overflow-hidden divide-x divide-[#E5E3DB]">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onUpdateStatus(
+                                      entry.id,
+                                      entry.status === "confirmado"
+                                        ? "pendente"
+                                        : "confirmado"
+                                    )
+                                  }
+                                  title="Marcar como confirmado"
+                                  className={`h-9 sm:h-8 inline-flex items-center gap-1 px-2.5 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                                    entry.status === "confirmado"
+                                      ? "bg-emerald-50 text-emerald-800 font-semibold"
+                                      : "text-zinc-700 hover:bg-emerald-50/60 hover:text-emerald-800"
+                                  }`}
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>Confirmado</span>
+                                </button>
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onUpdateStatus(
-                                  entry.id,
-                                  entry.status === "recusado"
-                                    ? "pendente"
-                                    : "recusado"
-                                )
-                              }
-                              title="Recusado (não poderá servir)"
-                              className={`h-10 sm:h-9 inline-flex items-center gap-1 px-2.5 text-xs font-medium rounded-lg border whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                                entry.status === "recusado"
-                                  ? "bg-red-50 text-red-800 border-red-300"
-                                  : "bg-white text-zinc-700 border-[#E8E6DF] hover:bg-red-50/70 hover:text-red-800 hover:border-red-200"
-                              }`}
-                            >
-                              <X className="w-3.5 h-3.5" />
-                              <span>Recusado</span>
-                            </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onUpdateStatus(
+                                      entry.id,
+                                      entry.status === "recusado"
+                                        ? "pendente"
+                                        : "recusado"
+                                    )
+                                  }
+                                  title="Recusado (não poderá servir)"
+                                  className={`h-9 sm:h-8 inline-flex items-center gap-1 px-2.5 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                                    entry.status === "recusado"
+                                      ? "bg-red-50 text-red-800 font-semibold"
+                                      : "text-zinc-700 hover:bg-red-50/70 hover:text-red-800"
+                                  }`}
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                  <span>Recusado</span>
+                                </button>
+                              </div>
 
-                            {entry.status === "recusado" && (
+                              {entry.status === "recusado" && (
+                                <button
+                                  type="button"
+                                  onClick={() => setReplacingEntryId(entry.id)}
+                                  title="Trocar por outro voluntário"
+                                  className="h-9 sm:h-8 inline-flex items-center gap-1 px-2.5 text-xs font-medium rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                  <span>Trocar</span>
+                                </button>
+                              )}
+
                               <button
                                 type="button"
-                                onClick={() => setReplacingEntryId(entry.id)}
-                                title="Trocar por outro voluntário"
-                                className="h-10 sm:h-9 inline-flex items-center gap-1 px-2.5 text-xs font-medium rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                                onClick={() => setMobilePreviewEntryId(entry.id)}
+                                title="Ver prévia da mensagem"
+                                className="lg:hidden h-9 w-9 inline-flex items-center justify-center text-zinc-600 border border-[#E5E3DB] bg-white hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
                               >
-                                <RefreshCw className="w-3.5 h-3.5" />
-                                <span>Trocar</span>
+                                <Eye className="w-4 h-4" />
                               </button>
-                            )}
 
-                            <button
-                              type="button"
-                              onClick={() => setMobilePreviewEntryId(entry.id)}
-                              title="Ver prévia da mensagem"
-                              className="lg:hidden h-10 w-10 inline-flex items-center justify-center text-zinc-600 border border-[#E8E6DF] bg-white hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyMessage(entry.id, message)}
+                                title="Copiar mensagem"
+                                className="h-9 w-9 sm:h-8 sm:w-8 inline-flex items-center justify-center text-zinc-600 border border-[#E5E3DB] bg-white hover:bg-[#FAF9F5] rounded-lg transition-colors cursor-pointer"
+                              >
+                                {copiedId === entry.id ? (
+                                  <Check className="w-4 h-4 text-emerald-700" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
 
-                            <button
-                              type="button"
-                              onClick={() => handleCopyMessage(entry.id, message)}
-                              title="Copiar mensagem"
-                              className="h-10 w-10 sm:h-9 sm:w-9 inline-flex items-center justify-center text-zinc-600 border border-[#E8E6DF] bg-white hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
-                            >
-                              {copiedId === entry.id ? (
-                                <Check className="w-4 h-4 text-emerald-700" />
+                              {canSendNow ? (
+                                <a
+                                  href={waUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={() => {
+                                    setFocusedEntryId(entry.id);
+                                    onMarkSent(entry.id);
+                                  }}
+                                  className="h-9 sm:h-8 inline-flex items-center gap-1.5 px-3 text-xs font-medium bg-emerald-700 text-white hover:bg-emerald-800 rounded-lg whitespace-nowrap shrink-0 transition-colors shadow-xs"
+                                >
+                                  <span>Enviar</span>
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
                               ) : (
-                                <Copy className="w-4 h-4" />
+                                <span
+                                  title={`Libera na quinta-feira (${windowInfo.unlockDateDDMM})`}
+                                  className="h-9 sm:h-8 inline-flex items-center gap-1.5 px-3 text-xs font-medium bg-zinc-100 text-zinc-400 rounded-lg whitespace-nowrap shrink-0 cursor-not-allowed"
+                                >
+                                  <Lock className="w-3.5 h-3.5" />
+                                  <span>Enviar</span>
+                                </span>
                               )}
-                            </button>
 
-                            {canSendNow ? (
-                              <a
-                                href={waUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={() => {
-                                  setFocusedEntryId(entry.id);
-                                  onMarkSent(entry.id);
-                                }}
-                                className="h-10 sm:h-9 inline-flex items-center gap-1.5 px-3.5 text-xs font-medium bg-emerald-700 text-white hover:bg-emerald-800 rounded-lg whitespace-nowrap shrink-0 transition-colors"
+                              <button
+                                type="button"
+                                onClick={() => onDeleteEntry(entry.id)}
+                                title="Remover da escala"
+                                className="h-9 w-9 sm:h-8 sm:w-8 inline-flex items-center justify-center text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                               >
-                                <span>Enviar</span>
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
-                            ) : (
-                              <span
-                                title={`Libera na quinta-feira (${windowInfo.unlockDateDDMM})`}
-                                className="h-10 sm:h-9 inline-flex items-center gap-1.5 px-3.5 text-xs font-medium bg-zinc-100 text-zinc-400 rounded-lg whitespace-nowrap shrink-0 cursor-not-allowed"
-                              >
-                                <Lock className="w-3.5 h-3.5" />
-                                <span>Enviar</span>
-                              </span>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => onDeleteEntry(entry.id)}
-                              title="Remover da escala"
-                              className="h-10 w-10 sm:h-9 sm:w-9 inline-flex items-center justify-center text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    });
-                  })}
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
+      );
+    }).filter(Boolean);
+
+    return (
+      <section key={shift} className="space-y-4">
+        {/* Editorial Shift Header */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+          <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+            <h2 className="font-display text-lg font-bold tracking-tight text-zinc-950">
+              {title}
+            </h2>
+            <span className="text-xs font-mono-tabular text-zinc-500">
+              {shiftCount} {shiftCount === 1 ? "voluntário" : "voluntários"}
+            </span>
+            {shiftConfirmed > 0 && (
+              <>
+                <span className="text-zinc-300 text-xs" aria-hidden="true">
+                  ·
+                </span>
+                <span className="text-xs font-mono-tabular font-medium text-emerald-700">
+                  {shiftConfirmed} confirmado{shiftConfirmed === 1 ? "" : "s"}
+                </span>
+              </>
+            )}
+            <span className="text-zinc-300 text-xs" aria-hidden="true">
+              ·
+            </span>
+            <span className="text-xs text-zinc-500">
+              Oração às <span className="font-mono-tabular font-medium text-zinc-700">{prayerTime}</span>
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onOpenAddForGroup(shift, shiftGroups[0]?.id || "")}
+            className="h-8 inline-flex items-center gap-1.5 px-3 text-xs font-medium text-emerald-800 bg-white hover:bg-emerald-50 border border-[#E5E3DB] hover:border-emerald-200 rounded-lg whitespace-nowrap transition-colors cursor-pointer shadow-2xs"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Adicionar neste culto</span>
+          </button>
+        </div>
+
+        {/* Distinct Category Cards */}
+        {visibleCategoryCards.length > 0 ? (
+          <div className="space-y-4">{visibleCategoryCards}</div>
+        ) : (
+          <div className="bg-white border border-[#E5E3DB] rounded-2xl p-8 text-center text-sm text-zinc-500">
+            Nenhum voluntário encontrado neste culto com os filtros atuais.
+          </div>
+        )}
       </section>
     );
   };
@@ -730,22 +819,20 @@ export function ScheduleWorkspace({
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-7 space-y-6">
       {/* Editorial Command Header */}
-      <div className="bg-white border border-[#E8E6DF] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] p-6">
+      <div className="bg-white border border-[#E5E3DB] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] p-5 sm:p-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div>
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="font-display text-2xl font-bold tracking-tight text-zinc-900">
-                Escala de Domingo{" "}
-                <span className="font-mono-tabular text-emerald-700">
-                  {dateDDMM}
-                </span>
-              </h1>
-              {isFirstSundayOfMonth(sundayISO) && (
-                <span className="px-2.5 py-0.5 text-xs font-semibold rounded-md bg-amber-50 text-amber-900 border border-amber-200">
-                  Culto de Santa Ceia
-                </span>
-              )}
-            </div>
+            {santaCeiaSunday && (
+              <div className="text-xs font-semibold text-amber-800 mb-1">
+                Culto de Santa Ceia · 1º domingo do mês
+              </div>
+            )}
+            <h1 className="font-display text-2xl sm:text-[26px] font-bold tracking-tight text-zinc-950">
+              Escala de Domingo{" "}
+              <span className="font-mono-tabular text-emerald-700">
+                {dateDDMM}
+              </span>
+            </h1>
 
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
               {windowInfo.isUnlocked ? (
@@ -767,7 +854,7 @@ export function ScheduleWorkspace({
                     className={`inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium rounded-md border transition-colors cursor-pointer ${
                       earlyOverride
                         ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                        : "bg-[#F7F6F2] text-zinc-700 border-[#E8E6DF] hover:bg-[#EFECE4]"
+                        : "bg-[#F5F4EF] text-zinc-700 border-[#E5E3DB] hover:bg-[#ECEAE2]"
                     }`}
                   >
                     <Unlock className="w-3 h-3" />
@@ -787,7 +874,7 @@ export function ScheduleWorkspace({
               <button
                 type="button"
                 onClick={onOpenTestSend}
-                className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium rounded-md border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium rounded-md border border-amber-200 bg-amber-50/80 text-amber-900 hover:bg-amber-100 transition-colors cursor-pointer"
               >
                 <FlaskConical className="w-3 h-3 text-amber-700" />
                 <span>Envio teste (qualquer dia)</span>
@@ -798,7 +885,7 @@ export function ScheduleWorkspace({
               </span>
 
               <span className="text-zinc-600">
-                Saudação automática agora:{" "}
+                Saudação atual:{" "}
                 <strong className="font-semibold text-zinc-900">
                   {currentGreeting}
                 </strong>
@@ -806,17 +893,17 @@ export function ScheduleWorkspace({
             </div>
           </div>
 
-          {/* Clean Tabular KPI Strip with responsive mobile layout */}
-          <div className="grid grid-cols-3 sm:grid-cols-5 gap-y-3 sm:gap-y-0 sm:divide-x divide-[#EFECE4] border border-[#EFECE4] rounded-xl bg-[#FAF9F5] py-3 px-2 shrink-0">
-            <div className="px-2 sm:px-3 text-center">
+          {/* Tabular KPI Strip */}
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-y-3 sm:gap-y-0 sm:divide-x divide-[#ECEAE2] border border-[#ECEAE2] rounded-xl bg-[#FAF9F5] py-3 px-2 shrink-0">
+            <div className="px-2 sm:px-3.5 text-center">
               <div className="text-[11px] font-medium text-zinc-500">
                 Escalados
               </div>
-              <div className="text-lg sm:text-xl font-bold font-mono-tabular text-zinc-900 mt-0.5">
+              <div className="text-lg sm:text-xl font-bold font-mono-tabular text-zinc-950 mt-0.5">
                 {stats.total}
               </div>
             </div>
-            <div className="px-2 sm:px-3 text-center">
+            <div className="px-2 sm:px-3.5 text-center">
               <div className="text-[11px] font-medium text-zinc-500">
                 Pendentes
               </div>
@@ -824,7 +911,7 @@ export function ScheduleWorkspace({
                 {stats.pendentes}
               </div>
             </div>
-            <div className="px-2 sm:px-3 text-center">
+            <div className="px-2 sm:px-3.5 text-center">
               <div className="text-[11px] font-medium text-zinc-500">
                 Enviados
               </div>
@@ -832,7 +919,7 @@ export function ScheduleWorkspace({
                 {stats.enviados}
               </div>
             </div>
-            <div className="px-2 sm:px-3 text-center">
+            <div className="px-2 sm:px-3.5 text-center">
               <div className="text-[11px] font-medium text-zinc-500">
                 Confirmados
               </div>
@@ -840,7 +927,7 @@ export function ScheduleWorkspace({
                 {stats.confirmados}
               </div>
             </div>
-            <div className="px-2 sm:px-3 text-center">
+            <div className="px-2 sm:px-3.5 text-center">
               <div className="text-[11px] font-medium text-zinc-500">
                 Recusados
               </div>
@@ -851,28 +938,37 @@ export function ScheduleWorkspace({
           </div>
         </div>
 
-        {/* Sunday Switcher Row */}
-        <div className="mt-5 pt-4 border-t border-[#EFECE4] flex flex-wrap items-center justify-between gap-3">
+        {/* Sunday Switcher & Bulk Selection Bar */}
+        <div className="mt-5 pt-4 border-t border-[#ECEAE2] flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500 mr-1">
               <Calendar className="w-3.5 h-3.5 text-zinc-400" />
               Próximos domingos:
             </span>
             <div className="flex flex-wrap items-center gap-1 p-1 bg-[#F4F2EC] rounded-lg">
-              {upcomingSundays.map((sunday) => (
-                <button
-                  key={sunday}
-                  type="button"
-                  onClick={() => onChangeSundayISO(sunday)}
-                  className={`px-3 py-1 text-xs font-mono-tabular font-medium rounded-md whitespace-nowrap transition-colors cursor-pointer ${
-                    sundayISO === sunday
-                      ? "bg-white text-zinc-900 shadow-xs"
-                      : "text-zinc-600 hover:text-zinc-900"
-                  }`}
-                >
-                  {formatDateDDMM(sunday)}
-                </button>
-              ))}
+              {upcomingSundays.map((sunday) => {
+                const firstSunday = isFirstSundayOfMonth(sunday);
+                return (
+                  <button
+                    key={sunday}
+                    type="button"
+                    onClick={() => onChangeSundayISO(sunday)}
+                    title={
+                      firstSunday
+                        ? "1º domingo do mês (Culto de Santa Ceia)"
+                        : undefined
+                    }
+                    className={`px-3 py-1 text-xs font-mono-tabular font-medium rounded-md whitespace-nowrap transition-colors cursor-pointer ${
+                      sundayISO === sunday
+                        ? "bg-white text-zinc-950 shadow-xs"
+                        : "text-zinc-600 hover:text-zinc-950"
+                    }`}
+                  >
+                    {formatDateDDMM(sunday)}
+                    {firstSunday ? " · Ceia" : ""}
+                  </button>
+                );
+              })}
             </div>
             <input
               type="date"
@@ -883,11 +979,11 @@ export function ScheduleWorkspace({
                 }
               }}
               aria-label="Selecionar outro domingo"
-              className="px-2.5 py-1.5 text-xs font-mono-tabular border border-[#E8E6DF] rounded-lg text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
+              className="px-2.5 py-1.5 text-xs font-mono-tabular border border-[#E5E3DB] rounded-lg text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={() =>
@@ -936,7 +1032,7 @@ export function ScheduleWorkspace({
                   disabled={!canSendNow}
                   className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
                     canSendNow
-                      ? "bg-emerald-700 text-white hover:bg-emerald-800"
+                      ? "bg-emerald-700 text-white hover:bg-emerald-800 shadow-xs"
                       : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
                   }`}
                 >
@@ -953,10 +1049,10 @@ export function ScheduleWorkspace({
 
       {/* Main 2-Column Studio Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left 8 Columns: Filters + Schedule List */}
-        <div className="lg:col-span-8 space-y-5">
+        {/* Left 8 Columns: Filters + Divided Category Cards */}
+        <div className="lg:col-span-8 space-y-6">
           {/* Filter Bar */}
-          <div className="bg-white border border-[#E8E6DF] rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-[0_1px_2px_rgba(15,23,42,0.02)]">
+          <div className="bg-white border border-[#E5E3DB] rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-[0_1px_2px_rgba(15,23,42,0.02)]">
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center p-1 bg-[#F4F2EC] rounded-lg">
                 {(
@@ -972,8 +1068,8 @@ export function ScheduleWorkspace({
                     onClick={() => setShiftFilter(tab.id)}
                     className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap transition-colors cursor-pointer ${
                       shiftFilter === tab.id
-                        ? "bg-white text-zinc-900 shadow-xs"
-                        : "text-zinc-600 hover:text-zinc-900"
+                        ? "bg-white text-zinc-950 shadow-xs"
+                        : "text-zinc-600 hover:text-zinc-950"
                     }`}
                   >
                     {tab.label}
@@ -987,7 +1083,7 @@ export function ScheduleWorkspace({
                   setStatusFilter(e.target.value as StatusFilterType)
                 }
                 aria-label="Filtrar por status"
-                className="px-3 py-1.5 text-xs font-medium border border-[#E8E6DF] rounded-lg bg-white text-zinc-700 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                className="px-3 py-1.5 text-xs font-medium border border-[#E5E3DB] rounded-lg bg-white text-zinc-700 focus:outline-none focus:ring-2 focus:ring-emerald-700"
               >
                 <option value="todos">Todos os status</option>
                 <option value="pendente">Pendentes (sem resposta)</option>
@@ -1005,15 +1101,15 @@ export function ScheduleWorkspace({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Buscar nome ou turma..."
-                className="pl-8 pr-3 py-1.5 text-xs border border-[#E8E6DF] rounded-lg w-full sm:w-52 bg-[#FAF9F5] focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                className="pl-8 pr-3 py-1.5 text-xs border border-[#E5E3DB] rounded-lg w-full sm:w-52 bg-[#FAF9F5] focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
               />
             </div>
           </div>
 
           {dayEntries.length === 0 && sundayISO !== "2026-11-15" && (
-            <div className="bg-white border border-[#E8E6DF] rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="bg-white border border-[#E5E3DB] rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h3 className="font-display text-sm font-semibold text-zinc-900">
+                <h3 className="font-display text-sm font-semibold text-zinc-950">
                   Domingo {dateDDMM} ainda está sem voluntários
                 </h3>
                 <p className="text-xs text-zinc-600 mt-0.5">
@@ -1032,7 +1128,7 @@ export function ScheduleWorkspace({
             </div>
           )}
 
-          <div className="space-y-5">
+          <div className="space-y-8">
             {(shiftFilter === "todos" || shiftFilter === "noite") &&
               renderShiftSection("noite", "Culto da Noite")}
             {(shiftFilter === "todos" || shiftFilter === "manha") &&
@@ -1040,9 +1136,9 @@ export function ScheduleWorkspace({
           </div>
 
           {/* Export Schedule Footer */}
-          <div className="bg-white border border-[#E8E6DF] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="bg-white border border-[#E5E3DB] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h3 className="font-display text-sm font-semibold text-zinc-900">
+              <h3 className="font-display text-sm font-semibold text-zinc-950">
                 Exportar escala de {dateDDMM}
               </h3>
               <p className="text-xs text-zinc-500 mt-0.5">
@@ -1061,7 +1157,7 @@ export function ScheduleWorkspace({
                     groups: SCHEDULE_GROUPS,
                   })
                 }
-                className="h-10 inline-flex items-center gap-2 px-4 text-xs font-medium border border-[#E8E6DF] text-zinc-800 bg-white hover:bg-[#FAF9F5] rounded-lg whitespace-nowrap transition-colors cursor-pointer"
+                className="h-10 inline-flex items-center gap-2 px-4 text-xs font-medium border border-[#E5E3DB] text-zinc-800 bg-white hover:bg-[#FAF9F5] rounded-lg whitespace-nowrap transition-colors cursor-pointer"
               >
                 <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
                 <span>Exportar Excel</span>
@@ -1088,11 +1184,11 @@ export function ScheduleWorkspace({
 
         {/* Right 4 Columns: Sticky Live WhatsApp Preview (Desktop) */}
         <aside className="hidden lg:block lg:col-span-4 lg:sticky lg:top-24 space-y-4">
-          <div className="bg-white border border-[#E8E6DF] rounded-2xl p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4">
+          <div className="bg-white border border-[#E5E3DB] rounded-2xl p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4 text-emerald-700" />
-                <h2 className="font-display text-sm font-semibold text-zinc-900">
+                <h2 className="font-display text-sm font-semibold text-zinc-950">
                   Prévia da Mensagem
                 </h2>
               </div>
@@ -1121,7 +1217,7 @@ export function ScheduleWorkspace({
                     onClick={() =>
                       handleCopyMessage(previewEntry.id, previewMessage)
                     }
-                    className="flex-1 h-10 inline-flex items-center justify-center gap-2 px-3 text-xs font-medium border border-[#E8E6DF] text-zinc-700 bg-white hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
+                    className="flex-1 h-10 inline-flex items-center justify-center gap-2 px-3 text-xs font-medium border border-[#E5E3DB] text-zinc-700 bg-white hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
                   >
                     {copiedId === previewEntry.id ? (
                       <>
@@ -1193,13 +1289,13 @@ export function ScheduleWorkspace({
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-h-[90dvh] flex flex-col bg-white border-t border-[#E8E6DF] rounded-t-2xl shadow-2xl overflow-hidden"
+            className="w-full max-h-[90dvh] flex flex-col bg-white border-t border-[#E5E3DB] rounded-t-2xl shadow-2xl overflow-hidden"
           >
-            <div className="shrink-0 px-4 py-3.5 border-b border-[#EFECE4] flex items-center justify-between gap-3 bg-white">
+            <div className="shrink-0 px-4 py-3.5 border-b border-[#ECEAE2] flex items-center justify-between gap-3 bg-white">
               <div className="min-w-0">
                 <h2
                   id="mobile-preview-title"
-                  className="font-display text-base font-semibold text-zinc-900 truncate"
+                  className="font-display text-base font-semibold text-zinc-950 truncate"
                 >
                   Prévia da Mensagem
                 </h2>
@@ -1229,13 +1325,13 @@ export function ScheduleWorkspace({
               </p>
             </div>
 
-            <div className="shrink-0 px-4 py-3.5 border-t border-[#EFECE4] bg-[#FAF9F5] flex items-center gap-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
+            <div className="shrink-0 px-4 py-3.5 border-t border-[#ECEAE2] bg-[#FAF9F5] flex items-center gap-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
               <button
                 type="button"
                 onClick={() =>
                   handleCopyMessage(mobilePreviewEntry.id, mobilePreviewMessage)
                 }
-                className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-2 px-3 text-xs font-medium border border-[#E8E6DF] text-zinc-700 bg-white hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
+                className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-2 px-3 text-xs font-medium border border-[#E5E3DB] text-zinc-700 bg-white hover:bg-zinc-50 rounded-lg transition-colors cursor-pointer"
               >
                 {copiedId === mobilePreviewEntry.id ? (
                   <>
