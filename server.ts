@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import {
@@ -19,6 +20,22 @@ async function startServer() {
   app.use(express.json({ limit: "25mb" }));
 
   app.get("/favicon.ico", (_req, res) => {
+    const publicIcon = path.resolve(
+      __dirname,
+      "public/assets/aistudio/Logo_Mevam_Kids_-_Iniciais_0d7f3ec2.png"
+    );
+    const distIcon = path.resolve(
+      __dirname,
+      "dist/assets/aistudio/Logo_Mevam_Kids_-_Iniciais_0d7f3ec2.png"
+    );
+    const target = fs.existsSync(publicIcon)
+      ? publicIcon
+      : fs.existsSync(distIcon)
+        ? distIcon
+        : null;
+    if (target) {
+      return res.sendFile(target);
+    }
     return res.status(204).end();
   });
 
