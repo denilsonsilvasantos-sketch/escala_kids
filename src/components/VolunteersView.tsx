@@ -13,6 +13,8 @@ import {
   Pencil,
   Check,
   X,
+  Download,
+  RotateCcw,
 } from "lucide-react";
 import type {
   ContactLink,
@@ -28,6 +30,7 @@ import {
   areNamesPotentialMatch,
 } from "../utils/contacts";
 import { compressImageForUpload } from "../utils/imageUpload";
+import { exportVolunteersToExcel } from "../utils/exportSchedule";
 
 interface VolunteersViewProps {
   entries: ScheduleEntry[];
@@ -40,6 +43,7 @@ interface VolunteersViewProps {
   onDeleteVolunteer: (primaryKey: string) => void;
   onImportExtractedVolunteers: (items: ExtractedVolunteerOccurrence[]) => void;
   onRemoveLink: (linkId: string) => void;
+  onResetOfficialVolunteers?: () => Promise<void> | void;
 }
 
 export function VolunteersView({
@@ -53,6 +57,7 @@ export function VolunteersView({
   onDeleteVolunteer,
   onImportExtractedVolunteers,
   onRemoveLink,
+  onResetOfficialVolunteers,
 }: VolunteersViewProps) {
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
@@ -60,6 +65,8 @@ export function VolunteersView({
   const [filterTab, setFilterTab] = useState<"todos" | "com-telefone" | "sem-telefone">("todos");
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editingNameDraft, setEditingNameDraft] = useState("");
+  const [confirmingOfficialReset, setConfirmingOfficialReset] = useState(false);
+  const [isResettingOfficial, setIsResettingOfficial] = useState(false);
 
   // Image extraction state
   const [imagePreview, setImagePreview] = useState("");
@@ -588,39 +595,99 @@ export function VolunteersView({
         {/* Right Column: Full Directory */}
         <div className="lg:col-span-7 space-y-5">
           <div className="bg-white border border-[#E8E6DF] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] overflow-hidden">
-            <div className="p-4 sm:p-5 border-b border-[#EFECE4] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center p-1 bg-[#F4F2EC] rounded-lg self-start">
-                {(
-                  [
-                    { id: "todos", label: `Todos (${stats.total})` },
-                    { id: "com-telefone", label: `Com número (${stats.comTelefone})` },
-                    { id: "sem-telefone", label: `Sem número (${stats.semTelefone})` },
-                  ] as const
-                ).map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setFilterTab(tab.id)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap transition-colors cursor-pointer ${
-                      filterTab === tab.id
-                        ? "bg-white text-zinc-900 shadow-xs"
-                        : "text-zinc-600 hover:text-zinc-900"
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+            <div className="p-4 sm:p-5 border-b border-[#EFECE4] space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center p-1 bg-[#F4F2EC] rounded-lg self-start">
+                  {(
+                    [
+                      { id: "todos", label: `Todos (${stats.total})` },
+                      { id: "com-telefone", label: `Com número (${stats.comTelefone})` },
+                      { id: "sem-telefone", label: `Sem número (${stats.semTelefone})` },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setFilterTab(tab.id)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap transition-colors cursor-pointer ${
+                        filterTab === tab.id
+                          ? "bg-white text-zinc-900 shadow-xs"
+                          : "text-zinc-600 hover:text-zinc-900"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="relative w-full sm:w-56">
+                  <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Buscar nome ou WhatsApp..."
+                    className="w-full pl-8 pr-3 py-1.5 text-xs border border-[#E8E6DF] rounded-lg bg-[#FAF9F5] focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                  />
+                </div>
               </div>
 
-              <div className="relative w-full sm:w-56">
-                <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="search"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Buscar nome ou WhatsApp..."
-                  className="w-full pl-8 pr-3 py-1.5 text-xs border border-[#E8E6DF] rounded-lg bg-[#FAF9F5] focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                />
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#F4F2EC]">
+                <span className="text-xs text-zinc-500">
+                  Exibindo {filteredPeople.length} de {peopleList.length} voluntários
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  {onResetOfficialVolunteers && !confirmingOfficialReset && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingOfficialReset(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-700 bg-[#FAF9F5] hover:bg-[#F2EFE7] border border-[#E5E3DB] rounded-lg transition-colors cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Restaurar lista oficial (145)</span>
+                    </button>
+                  )}
+                  {onResetOfficialVolunteers && confirmingOfficialReset && (
+                    <div className="inline-flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1">
+                      <span className="text-[11px] font-medium text-amber-900">
+                        Substituir pelos 145 oficiais?
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isResettingOfficial}
+                        onClick={async () => {
+                          setIsResettingOfficial(true);
+                          try {
+                            await onResetOfficialVolunteers();
+                            setConfirmingOfficialReset(false);
+                          } finally {
+                            setIsResettingOfficial(false);
+                          }
+                        }}
+                        className="px-2 py-0.5 text-[11px] font-semibold bg-amber-700 text-white hover:bg-amber-800 rounded transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {isResettingOfficial ? "Restaurando..." : "Confirmar"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isResettingOfficial}
+                        onClick={() => setConfirmingOfficialReset(false)}
+                        className="px-2 py-0.5 text-[11px] font-medium text-zinc-600 hover:text-zinc-900 cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => exportVolunteersToExcel(peopleList)}
+                    disabled={peopleList.length === 0}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Exportar Excel</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -836,10 +903,36 @@ function VolunteerPhoneInput({
   onCommit: (phone: string) => void;
 }) {
   const [draft, setDraft] = useState(initialPhone);
+  const isFocusedRef = useRef(false);
+  const debounceRef = useRef<number | null>(null);
+  const lastCommittedRef = useRef(initialPhone.trim());
 
   useEffect(() => {
-    setDraft(initialPhone);
+    if (!isFocusedRef.current) {
+      setDraft(initialPhone);
+      lastCommittedRef.current = initialPhone.trim();
+    }
   }, [initialPhone]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current !== null) {
+        window.clearTimeout(debounceRef.current);
+      }
+    };
+  }, []);
+
+  const flushCommit = (value: string) => {
+    if (debounceRef.current !== null) {
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    const trimmed = value.trim();
+    if (trimmed !== lastCommittedRef.current) {
+      lastCommittedRef.current = trimmed;
+      onCommit(trimmed);
+    }
+  };
 
   return (
     <div className="relative flex-1 sm:w-52">
@@ -847,16 +940,33 @@ function VolunteerPhoneInput({
       <input
         type="tel"
         value={draft}
+        onFocus={() => {
+          isFocusedRef.current = true;
+        }}
         onChange={(e) => {
           const val = e.target.value;
           setDraft(val);
-          if (val.trim()) {
-            onCommit(val);
+          if (debounceRef.current !== null) {
+            window.clearTimeout(debounceRef.current);
           }
+          debounceRef.current = window.setTimeout(() => {
+            debounceRef.current = null;
+            const trimmed = val.trim();
+            if (trimmed !== lastCommittedRef.current) {
+              lastCommittedRef.current = trimmed;
+              onCommit(trimmed);
+            }
+          }, 700);
         }}
         onBlur={() => {
-          if (draft.trim() !== initialPhone.trim()) {
-            onCommit(draft);
+          isFocusedRef.current = false;
+          flushCommit(draft);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            flushCommit(draft);
+            (e.currentTarget as HTMLInputElement).blur();
           }
         }}
         placeholder="Adicionar WhatsApp"

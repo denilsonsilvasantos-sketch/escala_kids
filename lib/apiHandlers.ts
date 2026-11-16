@@ -1,5 +1,9 @@
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  OFFICIAL_CATALOG_VERSION,
+  OFFICIAL_VOLUNTEERS,
+} from "../src/data/officialVolunteers.ts";
 
 export const GROUP_IDS_MANHA = [
   "manha-prof-3e4",
@@ -431,6 +435,139 @@ Regras importantes:
   }
 }
 
+const DEFAULT_TEMPLATE_FALLBACK = `{saudacao} 🤗
+A paz do Senhor Jesus!
+
+Passando pra confirmar nossa escala desse domingo, dia {data} no Culto da {culto}.
+
+{grupo}
+
+Tudo certo?
+
+❤️🔥Lembrando tbm da nossa oração com toda equipe no templo kids as {horario_oracao}.`;
+
+async function syncOfficialVolunteersCatalog(
+  db: SupabaseClient,
+  existingTemplateRow: {
+    default_noite?: string;
+    default_manha?: string;
+    group_overrides?: Record<string, string>;
+  } | null
+): Promise<boolean> {
+  const nowIso = new Date().toISOString();
+  const officialMap = new Map<
+    string,
+    { name_key: string; volunteer_name: string; phone: string; updated_at: string }
+  >();
+
+  for (const vol of OFFICIAL_VOLUNTEERS) {
+    const cleanName = formatVolunteerNameServer(vol.name);
+    const key = normalizeNameKeyServer(cleanName);
+    if (!key) continue;
+    officialMap.set(key, {
+      name_key: key,
+      volunteer_name: cleanName,
+      phone: vol.phone.trim(),
+      updated_at: nowIso,
+    });
+  }
+
+  const officialRows = Array.from(officialMap.values());
+  const { error: upsertErr } = await db
+    .from("escala_contacts")
+    .upsert(officialRows, { onConflict: "name_key" });
+  if (upsertErr) {
+    throw upsertErr;
+  }
+
+  const { data: existingContacts, error: selectContactsErr } = await db
+    .from("escala_contacts")
+    .select("name_key");
+  if (selectContactsErr) {
+    throw selectContactsErr;
+  }
+
+  const keysToDelete = (existingContacts || [])
+    .map((r) => String(r.name_key || ""))
+    .filter((k) => k && !officialMap.has(k));
+
+  if (keysToDelete.length > 0) {
+    const { error: delErr } = await db
+      .from("escala_contacts")
+      .delete()
+      .in("name_key", keysToDelete);
+    if (delErr) {
+      throw delErr;
+    }
+  }
+
+  // Propagate clean phones to matching schedule entries
+  const { data: currentEntries } = await db
+    .from("escala_entries")
+    .select("id, volunteer_name, phone");
+  if (Array.isArray(currentEntries)) {
+    const entryUpdates: Array<{ id: string; phone: string; updated_at: string }> = [];
+    for (const row of currentEntries) {
+      const key = normalizeNameKeyServer(String(row.volunteer_name || ""));
+      const matched = officialMap.get(key);
+      if (matched && matched.phone && matched.phone !== (row.phone || "").trim()) {
+        entryUpdates.push({
+          id: String(row.id),
+          phone: matched.phone,
+          updated_at: nowIso,
+        });
+      }
+    }
+    for (const upd of entryUpdates) {
+      await db
+        .from("escala_entries")
+        .update({ phone: upd.phone, updated_at: upd.updated_at })
+        .eq("id", upd.id);
+    }
+  }
+
+  // Clean obsolete contact links referencing removed keys
+  const { data: currentLinks } = await db
+    .from("escala_contact_links")
+    .select("id, name_key_a, name_key_b");
+  if (Array.isArray(currentLinks)) {
+    const invalidLinkIds = currentLinks
+      .filter(
+        (l) =>
+          !officialMap.has(normalizeNameKeyServer(String(l.name_key_a || ""))) &&
+          !officialMap.has(normalizeNameKeyServer(String(l.name_key_b || "")))
+      )
+      .map((l) => String(l.id));
+    if (invalidLinkIds.length > 0) {
+      await db.from("escala_contact_links").delete().in("id", invalidLinkIds);
+    }
+  }
+
+  const prevOverrides =
+    existingTemplateRow?.group_overrides &&
+    typeof existingTemplateRow.group_overrides === "object"
+      ? existingTemplateRow.group_overrides
+      : {};
+
+  const { error: tplErr } = await db.from("escala_templates").upsert(
+    {
+      id: "default",
+      default_noite: existingTemplateRow?.default_noite || DEFAULT_TEMPLATE_FALLBACK,
+      default_manha: existingTemplateRow?.default_manha || DEFAULT_TEMPLATE_FALLBACK,
+      group_overrides: {
+        ...prevOverrides,
+        __catalog_version: OFFICIAL_CATALOG_VERSION,
+      },
+      updated_at: nowIso,
+    },
+    { onConflict: "id" }
+  );
+  if (tplErr) {
+    throw tplErr;
+  }
+  return true;
+}
+
 export async function handleCloudStateGet(): Promise<HandlerResult> {
   try {
     const cfg = getSupabaseConfig();
@@ -484,58 +621,48 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
       };
     }
 
-    const entries = (entriesRes.data || []).map((row) => ({
-      id: row.id,
-      date: row.date,
-      shift: row.shift,
-      groupId: row.group_id,
-      volunteerName: formatVolunteerNameServer(row.volunteer_name || ""),
-      phone: row.phone || "",
-      status: row.status || "pendente",
-      messageSent: Boolean(row.message_sent),
-    }));
+    // One-time atomic cleanup/seed of the official 145 volunteers in Supabase
+    const overridesObj =
+      templatesRes.data?.group_overrides &&
+      typeof templatesRes.data.group_overrides === "object"
+        ? (templatesRes.data.group_overrides as Record<string, string>)
+        : {};
+    if (overridesObj.__catalog_version !== OFFICIAL_CATALOG_VERSION) {
+      await syncOfficialVolunteersCatalog(db, templatesRes.data || null);
+      const [freshEntriesRes, freshContactsRes, freshLinksRes, freshTemplatesRes] =
+        await Promise.all([
+          db
+            .from("escala_entries")
+            .select(
+              "id, date, shift, group_id, volunteer_name, phone, status, message_sent"
+            ),
+          db.from("escala_contacts").select("name_key, volunteer_name, phone"),
+          db
+            .from("escala_contact_links")
+            .select(
+              "id, name_key_a, name_key_b, display_name_a, display_name_b, relation"
+            ),
+          db
+            .from("escala_templates")
+            .select("default_noite, default_manha, group_overrides")
+            .eq("id", "default")
+            .maybeSingle(),
+        ]);
 
-    const contactBook: Record<string, string> = {};
-    const contactNames: Record<string, string> = {};
-    for (const row of contactsRes.data || []) {
-      const normKey = normalizeNameKeyServer(row.name_key || "");
-      if (!normKey) continue;
-      if (row.phone) {
-        contactBook[normKey] = row.phone;
-      }
-      if (row.volunteer_name) {
-        contactNames[normKey] = formatVolunteerNameServer(row.volunteer_name);
-      }
+      return formatCloudStateResponse({
+        entriesData: freshEntriesRes.data || [],
+        contactsData: freshContactsRes.data || [],
+        linksData: freshLinksRes.data || [],
+        templatesData: freshTemplatesRes.data || null,
+      });
     }
 
-    const contactLinks = (linksRes.data || []).map((row) => ({
-      id: row.id,
-      nameKeyA: row.name_key_a,
-      nameKeyB: row.name_key_b,
-      displayNameA: formatVolunteerNameServer(row.display_name_a || row.name_key_a),
-      displayNameB: formatVolunteerNameServer(row.display_name_b || row.name_key_b),
-      relation: row.relation === "same" ? "same" : "distinct",
-    }));
-
-    const templates = templatesRes.data
-      ? {
-          defaultNoite: templatesRes.data.default_noite,
-          defaultManha: templatesRes.data.default_manha,
-          groupOverrides: templatesRes.data.group_overrides || {},
-        }
-      : null;
-
-    return {
-      status: 200,
-      body: {
-        configured: true,
-        entries,
-        contactBook,
-        contactNames,
-        contactLinks,
-        templates,
-      },
-    };
+    return formatCloudStateResponse({
+      entriesData: entriesRes.data || [],
+      contactsData: contactsRes.data || [],
+      linksData: linksRes.data || [],
+      templatesData: templatesRes.data || null,
+    });
   } catch (err) {
     console.error("Erro ao carregar dados do Supabase:", err);
     return {
@@ -546,6 +673,81 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
       },
     };
   }
+}
+
+function formatCloudStateResponse(params: {
+  entriesData: Array<Record<string, unknown>>;
+  contactsData: Array<Record<string, unknown>>;
+  linksData: Array<Record<string, unknown>>;
+  templatesData: Record<string, unknown> | null;
+}): HandlerResult {
+  const entries = params.entriesData.map((row) => ({
+    id: row.id,
+    date: row.date,
+    shift: row.shift,
+    groupId: row.group_id,
+    volunteerName: formatVolunteerNameServer(String(row.volunteer_name || "")),
+    phone: row.phone || "",
+    status: row.status || "pendente",
+    messageSent: Boolean(row.message_sent),
+  }));
+
+  const contactBook: Record<string, string> = {};
+  const contactNames: Record<string, string> = {};
+  for (const row of params.contactsData) {
+    const normKey = normalizeNameKeyServer(String(row.name_key || ""));
+    if (!normKey) continue;
+    const display = formatVolunteerNameServer(
+      String(row.volunteer_name || row.name_key || "")
+    );
+    if (display) {
+      contactNames[normKey] = display;
+    }
+    const phone = typeof row.phone === "string" ? row.phone.trim() : "";
+    if (phone) {
+      contactBook[normKey] = phone;
+    }
+  }
+
+  const contactLinks = params.linksData.map((row) => ({
+    id: row.id,
+    nameKeyA: row.name_key_a,
+    nameKeyB: row.name_key_b,
+    displayNameA: formatVolunteerNameServer(
+      String(row.display_name_a || row.name_key_a || "")
+    ),
+    displayNameB: formatVolunteerNameServer(
+      String(row.display_name_b || row.name_key_b || "")
+    ),
+    relation: row.relation === "same" ? "same" : "distinct",
+  }));
+
+  const rawOverrides =
+    params.templatesData?.group_overrides &&
+    typeof params.templatesData.group_overrides === "object"
+      ? { ...(params.templatesData.group_overrides as Record<string, string>) }
+      : {};
+  delete rawOverrides.__catalog_version;
+
+  const templates = params.templatesData
+    ? {
+        defaultNoite: params.templatesData.default_noite,
+        defaultManha: params.templatesData.default_manha,
+        groupOverrides: rawOverrides,
+      }
+    : null;
+
+  return {
+    status: 200,
+    body: {
+      configured: true,
+      entries,
+      contactBook,
+      contactNames,
+      contactLinks,
+      templates,
+    },
+  };
 }
 
 export async function handleCloudStatePut(rawBody: unknown): Promise<HandlerResult> {
@@ -815,7 +1017,10 @@ export async function handleCloudStatePut(rawBody: unknown): Promise<HandlerResu
           id: "default",
           default_noite: templates.defaultNoite,
           default_manha: templates.defaultManha,
-          group_overrides: templates.groupOverrides || {},
+          group_overrides: {
+            ...(templates.groupOverrides || {}),
+            __catalog_version: OFFICIAL_CATALOG_VERSION,
+          },
           updated_at: nowIso,
         },
         { onConflict: "id" }
@@ -841,6 +1046,316 @@ export async function handleCloudStatePut(rawBody: unknown): Promise<HandlerResu
     return {
       status: 500,
       body: { error: "Erro ao salvar alterações no Supabase." },
+    };
+  }
+}
+
+export async function handleCloudStatePost(rawBody: unknown): Promise<HandlerResult> {
+  try {
+    const cfg = getSupabaseConfig();
+    if (!cfg.configured) {
+      return { status: 200, body: { configured: false } };
+    }
+    const db = createSupabaseServerClient();
+    if (!db) {
+      return { status: 503, body: { error: "Banco indisponível." } };
+    }
+
+    const body = (rawBody || {}) as Record<string, unknown>;
+    const action = typeof body.action === "string" ? body.action : "";
+    const nowIso = new Date().toISOString();
+
+    if (action === "upsert_volunteer") {
+      const cleanName = formatVolunteerNameServer(String(body.name || ""));
+      const nameKey = normalizeNameKeyServer(cleanName);
+      const phone = typeof body.phone === "string" ? body.phone.trim() : "";
+      if (!nameKey) {
+        return { status: 400, body: { error: "Nome do voluntário inválido." } };
+      }
+
+      const { data: existingRow } = await db
+        .from("escala_contacts")
+        .select("name_key, volunteer_name, phone")
+        .eq("name_key", nameKey)
+        .maybeSingle();
+
+      const finalPhone = phone !== "" || body.allowEmptyPhone ? phone : String(existingRow?.phone || "");
+
+      const { error: upErr } = await db.from("escala_contacts").upsert(
+        {
+          name_key: nameKey,
+          volunteer_name: cleanName,
+          phone: finalPhone,
+          updated_at: nowIso,
+        },
+        { onConflict: "name_key" }
+      );
+      if (upErr) return { status: 500, body: { error: upErr.message } };
+
+      if (finalPhone) {
+        const { data: allEntries } = await db
+          .from("escala_entries")
+          .select("id, volunteer_name");
+        const matchingIds = (allEntries || [])
+          .filter((r) => normalizeNameKeyServer(String(r.volunteer_name || "")) === nameKey)
+          .map((r) => String(r.id));
+        if (matchingIds.length > 0) {
+          await db
+            .from("escala_entries")
+            .update({ phone: finalPhone, updated_at: nowIso })
+            .in("id", matchingIds);
+        }
+      }
+    } else if (action === "rename_volunteer") {
+      const oldKey = normalizeNameKeyServer(String(body.oldKey || ""));
+      const cleanNewName = formatVolunteerNameServer(String(body.newName || ""));
+      const newKey = normalizeNameKeyServer(cleanNewName);
+      if (!oldKey || !newKey || !cleanNewName) {
+        return { status: 400, body: { error: "Nome inválido para renomeação." } };
+      }
+
+      const [{ data: oldRow }, { data: newRow }] = await Promise.all([
+        db.from("escala_contacts").select("phone").eq("name_key", oldKey).maybeSingle(),
+        db.from("escala_contacts").select("phone").eq("name_key", newKey).maybeSingle(),
+      ]);
+
+      const resolvedPhone =
+        (typeof body.phone === "string" ? body.phone.trim() : "") ||
+        String(newRow?.phone || "").trim() ||
+        String(oldRow?.phone || "").trim();
+
+      const { error: upErr } = await db.from("escala_contacts").upsert(
+        {
+          name_key: newKey,
+          volunteer_name: cleanNewName,
+          phone: resolvedPhone,
+          updated_at: nowIso,
+        },
+        { onConflict: "name_key" }
+      );
+      if (upErr) return { status: 500, body: { error: upErr.message } };
+
+      if (oldKey !== newKey) {
+        await db.from("escala_contacts").delete().eq("name_key", oldKey);
+      }
+
+      const { data: allEntries } = await db
+        .from("escala_entries")
+        .select("id, volunteer_name, phone");
+      const entryIdsToUpdate = (allEntries || [])
+        .filter((r) => normalizeNameKeyServer(String(r.volunteer_name || "")) === oldKey)
+        .map((r) => ({
+          id: String(r.id),
+          phone: String(r.phone || "").trim() || resolvedPhone,
+        }));
+
+      for (const item of entryIdsToUpdate) {
+        await db
+          .from("escala_entries")
+          .update({
+            volunteer_name: cleanNewName,
+            phone: item.phone,
+            updated_at: nowIso,
+          })
+          .eq("id", item.id);
+      }
+
+      if (oldKey !== newKey) {
+        const { data: links } = await db
+          .from("escala_contact_links")
+          .select("id, name_key_a, name_key_b, display_name_a, display_name_b, relation");
+        for (const l of links || []) {
+          const kA = normalizeNameKeyServer(String(l.name_key_a || ""));
+          const kB = normalizeNameKeyServer(String(l.name_key_b || ""));
+          if (kA !== oldKey && kB !== oldKey) continue;
+          const nextA = kA === oldKey ? newKey : kA;
+          const nextB = kB === oldKey ? newKey : kB;
+          if (nextA === nextB && l.relation === "distinct") {
+            await db.from("escala_contact_links").delete().eq("id", String(l.id));
+            continue;
+          }
+          const [first, second] = [nextA, nextB].sort((a, b) => a.localeCompare(b));
+          const nextId = `${first}::${second}`;
+          await db.from("escala_contact_links").delete().eq("id", String(l.id));
+          await db.from("escala_contact_links").upsert(
+            {
+              id: nextId,
+              name_key_a: nextA,
+              name_key_b: nextB,
+              display_name_a: nextA === newKey ? cleanNewName : String(l.display_name_a || nextA),
+              display_name_b: nextB === newKey ? cleanNewName : String(l.display_name_b || nextB),
+              relation: l.relation === "same" ? "same" : "distinct",
+              updated_at: nowIso,
+            },
+            { onConflict: "id" }
+          );
+        }
+      }
+    } else if (action === "delete_volunteer") {
+      const keys = Array.isArray(body.keys)
+        ? body.keys.map((k) => normalizeNameKeyServer(String(k))).filter(Boolean)
+        : [];
+      if (keys.length > 0) {
+        await db.from("escala_contacts").delete().in("name_key", keys);
+        const keySet = new Set(keys);
+        const { data: links } = await db
+          .from("escala_contact_links")
+          .select("id, name_key_a, name_key_b");
+        const toDel = (links || [])
+          .filter(
+            (l) =>
+              keySet.has(normalizeNameKeyServer(String(l.name_key_a || ""))) ||
+              keySet.has(normalizeNameKeyServer(String(l.name_key_b || "")))
+          )
+          .map((l) => String(l.id));
+        if (toDel.length > 0) {
+          await db.from("escala_contact_links").delete().in("id", toDel);
+        }
+      }
+    } else if (action === "replace_official_volunteers") {
+      const { data: tplData } = await db
+        .from("escala_templates")
+        .select("default_noite, default_manha, group_overrides")
+        .eq("id", "default")
+        .maybeSingle();
+      await syncOfficialVolunteersCatalog(db, tplData || null);
+    } else if (action === "upsert_entry") {
+      const entry = body.entry as {
+        id: string;
+        date: string;
+        shift: "manha" | "noite";
+        groupId: string;
+        volunteerName: string;
+        phone: string;
+        status: "pendente" | "confirmado" | "recusado";
+        messageSent: boolean;
+      };
+      if (entry && entry.id) {
+        await db.from("escala_entries").upsert(
+          {
+            id: entry.id,
+            date: entry.date,
+            shift: entry.shift,
+            group_id: entry.groupId,
+            volunteer_name: formatVolunteerNameServer(entry.volunteerName || ""),
+            phone: (entry.phone || "").trim(),
+            status: entry.status || "pendente",
+            message_sent: Boolean(entry.messageSent),
+            updated_at: nowIso,
+          },
+          { onConflict: "id" }
+        );
+      }
+    } else if (action === "update_entry") {
+      const id = String(body.id || "");
+      const patch = (body.patch || {}) as Record<string, unknown>;
+      if (id) {
+        const updatePayload: Record<string, unknown> = { updated_at: nowIso };
+        if (typeof patch.status === "string") updatePayload.status = patch.status;
+        if (typeof patch.messageSent === "boolean") updatePayload.message_sent = patch.messageSent;
+        if (typeof patch.phone === "string") updatePayload.phone = patch.phone.trim();
+        if (typeof patch.volunteerName === "string") {
+          updatePayload.volunteer_name = formatVolunteerNameServer(patch.volunteerName);
+        }
+        await db.from("escala_entries").update(updatePayload).eq("id", id);
+      }
+    } else if (action === "delete_entry") {
+      const id = String(body.id || "");
+      if (id) {
+        await db.from("escala_entries").delete().eq("id", id);
+      }
+    } else if (action === "add_entries") {
+      const replaceDate = typeof body.replaceDate === "string" ? body.replaceDate : "";
+      const replaceShift = typeof body.replaceShift === "string" ? body.replaceShift : "";
+      if (replaceDate && replaceShift) {
+        await db
+          .from("escala_entries")
+          .delete()
+          .eq("date", replaceDate)
+          .eq("shift", replaceShift);
+      }
+      const list = Array.isArray(body.entries) ? body.entries : [];
+      if (list.length > 0) {
+        const rows = list.map((e: Record<string, unknown>) => ({
+          id: String(e.id),
+          date: String(e.date),
+          shift: e.shift === "manha" ? "manha" : "noite",
+          group_id: String(e.groupId),
+          volunteer_name: formatVolunteerNameServer(String(e.volunteerName || "")),
+          phone: String(e.phone || "").trim(),
+          status:
+            e.status === "confirmado" || e.status === "recusado"
+              ? e.status
+              : "pendente",
+          message_sent: Boolean(e.messageSent),
+          updated_at: nowIso,
+        }));
+        await db.from("escala_entries").upsert(rows, { onConflict: "id" });
+      }
+    } else if (action === "upsert_link") {
+      const link = body.link as {
+        id: string;
+        nameKeyA: string;
+        nameKeyB: string;
+        displayNameA: string;
+        displayNameB: string;
+        relation: "same" | "distinct";
+      };
+      if (link && link.id) {
+        await db.from("escala_contact_links").upsert(
+          {
+            id: link.id,
+            name_key_a: normalizeNameKeyServer(link.nameKeyA),
+            name_key_b: normalizeNameKeyServer(link.nameKeyB),
+            display_name_a: formatVolunteerNameServer(link.displayNameA || link.nameKeyA),
+            display_name_b: formatVolunteerNameServer(link.displayNameB || link.nameKeyB),
+            relation: link.relation === "same" ? "same" : "distinct",
+            updated_at: nowIso,
+          },
+          { onConflict: "id" }
+        );
+      }
+    } else if (action === "delete_link") {
+      const id = String(body.id || "");
+      if (id) {
+        await db.from("escala_contact_links").delete().eq("id", id);
+      }
+    } else if (action === "upsert_templates") {
+      const templates = body.templates as {
+        defaultNoite: string;
+        defaultManha: string;
+        groupOverrides: Record<string, string>;
+      };
+      if (templates) {
+        await db.from("escala_templates").upsert(
+          {
+            id: "default",
+            default_noite: templates.defaultNoite,
+            default_manha: templates.defaultManha,
+            group_overrides: {
+              ...(templates.groupOverrides || {}),
+              __catalog_version: OFFICIAL_CATALOG_VERSION,
+            },
+            updated_at: nowIso,
+          },
+          { onConflict: "id" }
+        );
+      }
+    } else {
+      return { status: 400, body: { error: "Ação desconhecida." } };
+    }
+
+    const freshState = await handleCloudStateGet();
+    if (freshState.status !== 200) return freshState;
+    return {
+      status: 200,
+      body: { ok: true, syncedAt: nowIso, state: freshState.body },
+    };
+  } catch (err) {
+    console.error("Erro na atualização atômica no Supabase:", err);
+    return {
+      status: 500,
+      body: { error: "Erro ao atualizar dados compartilhados no Supabase." },
     };
   }
 }

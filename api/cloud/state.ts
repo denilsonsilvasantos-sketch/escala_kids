@@ -1,5 +1,6 @@
 import {
   handleCloudStateGet,
+  handleCloudStatePost,
   handleCloudStatePut,
   readRequestJsonBody,
   type NodeLikeRequest,
@@ -9,6 +10,12 @@ import {
 export default async function handler(req: NodeLikeRequest, res: NodeLikeResponse) {
   if (req.method === "GET") {
     const result = await handleCloudStateGet();
+    return res.status(result.status).json(result.body);
+  }
+
+  if (req.method === "POST") {
+    const body = await readRequestJsonBody(req);
+    const result = await handleCloudStatePost(body);
     return res.status(result.status).json(result.body);
   }
 

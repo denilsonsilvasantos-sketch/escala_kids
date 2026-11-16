@@ -288,6 +288,7 @@ export function buildKnownDirectory(params: {
     });
   }
 
+  const hasCatalog = directory.size > 0;
   for (const entry of params.entries) {
     const rawName = formatVolunteerName(entry.volunteerName);
     const key = normalizeNameKey(rawName);
@@ -295,17 +296,17 @@ export function buildKnownDirectory(params: {
     const existing = directory.get(key);
     const entryPhone = entry.phone.trim();
     if (!existing) {
+      // Only seed from schedule entries if the volunteer catalog itself is completely empty
+      if (!hasCatalog) {
+        directory.set(key, {
+          displayName: rawName,
+          phone: entryPhone,
+        });
+      }
+    } else if (!existing.phone && entryPhone) {
       directory.set(key, {
-        displayName: rawName,
+        displayName: existing.displayName,
         phone: entryPhone,
-      });
-    } else {
-      directory.set(key, {
-        displayName:
-          rawName.length >= existing.displayName.length
-            ? rawName
-            : existing.displayName,
-        phone: existing.phone || entryPhone,
       });
     }
   }

@@ -233,3 +233,21 @@ export function exportScheduleToPdf({
   const shiftSuffix = shiftFilter === "todos" ? "completa" : shiftFilter;
   doc.save(`escala-kids-${fileDate}-${shiftSuffix}.pdf`);
 }
+
+export function exportVolunteersToExcel(
+  volunteers: { displayName: string; phone: string }[]
+) {
+  const sheetData = volunteers.map((v) => ({
+    Nome: formatVolunteerName(v.displayName),
+    WhatsApp: v.phone ? formatPhoneDisplay(v.phone) : "",
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(sheetData);
+  worksheet["!cols"] = [{ wch: 32 }, { wch: 20 }];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Voluntarios");
+
+  XLSX.writeFile(workbook, "voluntarios-mevam-kids.xlsx");
+}
+

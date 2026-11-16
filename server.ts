@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import {
   handleCloudStateGet,
+  handleCloudStatePost,
   handleCloudStatePut,
   handleExtractVolunteers,
   handleParseSchedule,
@@ -51,6 +52,11 @@ async function startServer() {
 
   app.get("/api/cloud/state", async (_req, res) => {
     const result = await handleCloudStateGet();
+    return res.status(result.status).json(result.body);
+  });
+
+  app.post("/api/cloud/state", async (req, res) => {
+    const result = await handleCloudStatePost(req.body);
     return res.status(result.status).json(result.body);
   });
 

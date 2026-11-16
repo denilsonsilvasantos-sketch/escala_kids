@@ -15,6 +15,7 @@ import {
   INITIAL_ENTRIES,
   SCHEDULE_GROUPS,
 } from "./data/initialData";
+import { OFFICIAL_VOLUNTEERS } from "./data/officialVolunteers";
 import type {
   AppView,
   ContactLink,
@@ -45,9 +46,28 @@ import {
 const STORAGE_ENTRIES_KEY = "escala-kids:entries:v1";
 const STORAGE_MIGRATION_V2_KEY = "escala-kids:migrated-extra-roles:v2";
 const STORAGE_TEMPLATES_KEY = "escala-kids:templates:v1";
-const STORAGE_CONTACTS_KEY = "escala-kids:contacts:v1";
-const STORAGE_CONTACT_NAMES_KEY = "escala-kids:contact-names:v1";
+const STORAGE_CONTACTS_KEY = "escala-kids:contacts:v2";
+const STORAGE_CONTACT_NAMES_KEY = "escala-kids:contact-names:v2";
 const STORAGE_CONTACT_LINKS_KEY = "escala-kids:contact-links:v1";
+const STORAGE_CLOUD_ENTRIES_SEEDED_KEY = "escala-kids:cloud-entries-seeded:v1";
+
+function buildOfficialInitialContacts(): {
+  book: Record<string, string>;
+  names: Record<string, string>;
+} {
+  const book: Record<string, string> = {};
+  const names: Record<string, string> = {};
+  for (const vol of OFFICIAL_VOLUNTEERS) {
+    const cleanName = formatVolunteerName(vol.name);
+    const key = normalizeNameKey(cleanName);
+    if (!key) continue;
+    names[key] = cleanName;
+    if (vol.phone.trim()) {
+      book[key] = vol.phone.trim();
+    }
+  }
+  return { book, names };
+}
 
 function loadJson<T>(key: string, fallback: T): T {
   try {
@@ -181,17 +201,34 @@ export default function App() {
   const [entries, setEntries] = useState<ScheduleEntry[]>(loadEntries);
   const [templates, setTemplates] =
     useState<MessageTemplatesState>(loadTemplates);
-  const [contactBook, setContactBook] = useState<Record<string, string>>(() =>
-    normalizeContactBookKeys(
-      loadJson<Record<string, string>>(STORAGE_CONTACTS_KEY, {})
-    ).book
-  );
-  const [contactNames, setContactNames] = useState<Record<string, string>>(() =>
-    normalizeContactBookKeys(
-      loadJson<Record<string, string>>(STORAGE_CONTACTS_KEY, {}),
-      loadJson<Record<string, string>>(STORAGE_CONTACT_NAMES_KEY, {})
-    ).names
-  );
+  const [contactBook, setContactBook] = useState<Record<string, string>>(() => {
+    const storedBook = loadJson<Record<string, string>>(STORAGE_CONTACTS_KEY, {});
+    const storedNames = loadJson<Record<string, string>>(
+      STORAGE_CONTACT_NAMES_KEY,
+      {}
+    );
+    if (
+      Object.keys(storedBook).length === 0 &&
+      Object.keys(storedNames).length === 0
+    ) {
+      return buildOfficialInitialContacts().book;
+    }
+    return normalizeContactBookKeys(storedBook, storedNames).book;
+  });
+  const [contactNames, setContactNames] = useState<Record<string, string>>(() => {
+    const storedBook = loadJson<Record<string, string>>(STORAGE_CONTACTS_KEY, {});
+    const storedNames = loadJson<Record<string, string>>(
+      STORAGE_CONTACT_NAMES_KEY,
+      {}
+    );
+    if (
+      Object.keys(storedBook).length === 0 &&
+      Object.keys(storedNames).length === 0
+    ) {
+      return buildOfficialInitialContacts().names;
+    }
+    return normalizeContactBookKeys(storedBook, storedNames).names;
+  });
   const [contactLinks, setContactLinks] = useState<ContactLink[]>(() =>
     loadJson<ContactLink[]>(STORAGE_CONTACT_LINKS_KEY, [])
   );
@@ -218,18 +255,21 @@ export default function App() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [needsSchemaSetup, setNeedsSchemaSetup] = useState(false);
 
-  const skipNextCloudPushRef = useRef(false);
-  const hasHydratedCloudRef = useRef(false);
+  const pendingMutationsRef = useRef(0);
+  const phoneDebounceTimersRef = useRef<Record<string, number>>({});
+  const templateDebounceTimerRef = useRef<number | null>(null);
   const entriesRef = useRef(entries);
   const templatesRef = useRef(templates);
   const contactBookRef = useRef(contactBook);
   const contactNamesRef = useRef(contactNames);
   const contactLinksRef = useRef(contactLinks);
+  const supabaseConfiguredRef = useRef(supabaseConfigured);
   entriesRef.current = entries;
   templatesRef.current = templates;
   contactBookRef.current = contactBook;
   contactNamesRef.current = contactNames;
   contactLinksRef.current = contactLinks;
+  supabaseConfiguredRef.current = supabaseConfigured;
 
   useEffect(() => {
     try {
@@ -277,6 +317,114 @@ export default function App() {
     }
   }, [contactLinks]);
 
+  const applyAuthoritativeCloudState = useCallback(
+    (data: {
+      entries?: unknown;
+      contactBook?: unknown;
+      contactNames?: unknown;
+      contactLinks?: unknown;
+      templates?: unknown;
+    }) => {
+      const cloudEntries = Array.isArray(data.entries)
+        ? (data.entries as RawStoredEntry[]).map(normalizeEntry)
+        : [];
+      const rawCloudBook =
+        data.contactBook && typeof data.contactBook === "object"
+          ? (data.contactBook as Record<string, string>)
+          : {};
+      const rawCloudNames =
+        data.contactNames && typeof data.contactNames === "object"
+          ? (data.contactNames as Record<string, string>)
+          : {};
+      const normalizedCloud = normalizeContactBookKeys(
+        rawCloudBook,
+        rawCloudNames
+      );
+      const cloudLinks = Array.isArray(data.contactLinks)
+        ? (data.contactLinks as ContactLink[])
+        : [];
+      const cloudTemplates = data.templates as MessageTemplatesState | null;
+
+      // Authoritative directory from Supabase: NEVER merge localStorage or resurrect historical entry names
+      const hydrated = hydrateEntriesWithSavedContacts(
+        cloudEntries,
+        normalizedCloud.book,
+        cloudLinks
+      );
+
+      const upgradedCloudTemplates = cloudTemplates
+        ? upgradeTemplatesState(cloudTemplates)
+        : null;
+
+      setEntries(hydrated.entries);
+      setContactBook(normalizedCloud.book);
+      setContactNames(normalizedCloud.names);
+      setContactLinks(cloudLinks);
+      if (upgradedCloudTemplates) {
+        setTemplates(upgradedCloudTemplates.templates);
+      }
+
+      return {
+        cloudEntries,
+        upgradedTemplates: upgradedCloudTemplates?.upgraded
+          ? upgradedCloudTemplates.templates
+          : null,
+      };
+    },
+    []
+  );
+
+  const postCloudAction = useCallback(
+    async (
+      actionBody: Record<string, unknown>,
+      options?: { silentError?: boolean; applyReturnedState?: boolean }
+    ) => {
+      if (!supabaseConfiguredRef.current) return null;
+      pendingMutationsRef.current += 1;
+      try {
+        const res = await fetch("/api/cloud/state", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(actionBody),
+        });
+        const rawText = await res.text();
+        let data: {
+          configured?: boolean;
+          needsSchemaSetup?: boolean;
+          error?: string;
+          state?: Record<string, unknown>;
+        } = {};
+        try {
+          data = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          data = {};
+        }
+        if (!res.ok) {
+          if (data.needsSchemaSetup) setNeedsSchemaSetup(true);
+          throw new Error(data.error || "Erro ao salvar alteração na nuvem.");
+        }
+        setNeedsSchemaSetup(false);
+        setSyncError(null);
+        return data;
+      } catch (err) {
+        if (!options?.silentError) {
+          setSyncError(
+            err instanceof Error
+              ? err.message
+              : "Erro ao salvar alteração na nuvem."
+          );
+        }
+        return null;
+      } finally {
+        pendingMutationsRef.current = Math.max(
+          0,
+          pendingMutationsRef.current - 1
+        );
+      }
+    },
+    []
+  );
+
   const pushStateToCloud = useCallback(
     async (payload: {
       entries: ScheduleEntry[];
@@ -308,11 +456,16 @@ export default function App() {
   );
 
   const pullStateFromCloud = useCallback(
-    async (seedIfEmpty: boolean) => {
-      setIsSyncing(true);
-      setSyncError(null);
+    async (seedIfEmpty: boolean, options?: { silent?: boolean }) => {
+      if (options?.silent && pendingMutationsRef.current > 0) {
+        return;
+      }
+      if (!options?.silent) {
+        setIsSyncing(true);
+        setSyncError(null);
+      }
       try {
-        const res = await fetch("/api/cloud/state");
+        const res = await fetch("/api/cloud/state", { cache: "no-store" });
         const rawText = await res.text();
         let data: {
           configured?: boolean;
@@ -333,6 +486,7 @@ export default function App() {
           throw new Error("Resposta inválida ao ler dados da nuvem.");
         }
         setSupabaseConfigured(Boolean(data.configured));
+        supabaseConfiguredRef.current = Boolean(data.configured);
 
         if (!data.configured) {
           return;
@@ -347,22 +501,17 @@ export default function App() {
         const cloudEntries = Array.isArray(data.entries)
           ? (data.entries as RawStoredEntry[]).map(normalizeEntry)
           : [];
-        const rawCloudBook =
-          data.contactBook && typeof data.contactBook === "object"
-            ? (data.contactBook as Record<string, string>)
-            : {};
-        const rawCloudNames =
-          data.contactNames && typeof data.contactNames === "object"
-            ? (data.contactNames as Record<string, string>)
-            : {};
-        const normalizedCloud = normalizeContactBookKeys(
-          rawCloudBook,
-          rawCloudNames
-        );
-        const cloudLinks = Array.isArray(data.contactLinks)
-          ? (data.contactLinks as ContactLink[])
-          : [];
         const cloudTemplates = data.templates as MessageTemplatesState | null;
+
+        // If the Supabase project has never been seeded with initial entries yet, seed entries once
+        let alreadySeededEntries = false;
+        try {
+          alreadySeededEntries = Boolean(
+            localStorage.getItem(STORAGE_CLOUD_ENTRIES_SEEDED_KEY)
+          );
+        } catch {
+          alreadySeededEntries = false;
+        }
 
         if (cloudEntries.length === 0 && !cloudTemplates && seedIfEmpty) {
           await pushStateToCloud({
@@ -372,60 +521,67 @@ export default function App() {
             contactLinks: contactLinksRef.current,
             templates: templatesRef.current,
           });
-          hasHydratedCloudRef.current = true;
+          try {
+            localStorage.setItem(STORAGE_CLOUD_ENTRIES_SEEDED_KEY, "1");
+          } catch {
+            // Ignore storage errors
+          }
           return;
         }
 
-        // Backfill contact book from any cloud entries that already have phones
-        const mergedBook = {
-          ...contactBookRef.current,
-          ...normalizedCloud.book,
-        };
-        const mergedNames = {
-          ...contactNamesRef.current,
-          ...normalizedCloud.names,
-        };
-        for (const e of cloudEntries) {
-          const formatted = formatVolunteerName(e.volunteerName);
-          const key = normalizeNameKey(formatted);
-          if (key) {
-            if (!mergedNames[key]) mergedNames[key] = formatted;
-            if (e.phone.trim() && !mergedBook[key]) {
-              mergedBook[key] = e.phone.trim();
-            }
+        if (
+          cloudEntries.length === 0 &&
+          seedIfEmpty &&
+          !alreadySeededEntries &&
+          entriesRef.current.length > 0
+        ) {
+          await postCloudAction({
+            action: "add_entries",
+            entries: entriesRef.current,
+          });
+          try {
+            localStorage.setItem(STORAGE_CLOUD_ENTRIES_SEEDED_KEY, "1");
+          } catch {
+            // Ignore storage errors
+          }
+        } else if (cloudEntries.length > 0) {
+          try {
+            localStorage.setItem(STORAGE_CLOUD_ENTRIES_SEEDED_KEY, "1");
+          } catch {
+            // Ignore storage errors
           }
         }
 
-        const hydrated = hydrateEntriesWithSavedContacts(
-          cloudEntries,
-          mergedBook,
-          cloudLinks
-        );
+        if (options?.silent) {
+          if (pendingMutationsRef.current > 0) return;
+          const activeTag = document.activeElement?.tagName;
+          if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") {
+            return;
+          }
+        }
 
-        const upgradedCloudTemplates = cloudTemplates
-          ? upgradeTemplatesState(cloudTemplates)
-          : null;
-
-        skipNextCloudPushRef.current = !upgradedCloudTemplates?.upgraded;
-        hasHydratedCloudRef.current = true;
-        setEntries(hydrated.entries);
-        setContactBook(mergedBook);
-        setContactNames(mergedNames);
-        setContactLinks(cloudLinks);
-        if (upgradedCloudTemplates) {
-          setTemplates(upgradedCloudTemplates.templates);
+        const result = applyAuthoritativeCloudState(data);
+        if (result.upgradedTemplates) {
+          void postCloudAction({
+            action: "upsert_templates",
+            templates: result.upgradedTemplates,
+          });
         }
       } catch (err) {
-        setSyncError(
-          err instanceof Error
-            ? err.message
-            : "Erro ao sincronizar com o Supabase."
-        );
+        if (!options?.silent) {
+          setSyncError(
+            err instanceof Error
+              ? err.message
+              : "Erro ao sincronizar com o Supabase."
+          );
+        }
       } finally {
-        setIsSyncing(false);
+        if (!options?.silent) {
+          setIsSyncing(false);
+        }
       }
     },
-    [pushStateToCloud]
+    [applyAuthoritativeCloudState, postCloudAction, pushStateToCloud]
   );
 
   // Pull shared cloud data automatically on initial load (no login needed)
@@ -433,52 +589,37 @@ export default function App() {
     void pullStateFromCloud(true);
   }, [pullStateFromCloud]);
 
-  // Debounced auto-push whenever local state changes while Supabase is active
-  useEffect(() => {
-    if (!supabaseConfigured || !hasHydratedCloudRef.current) {
-      return;
-    }
-    if (skipNextCloudPushRef.current) {
-      skipNextCloudPushRef.current = false;
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void pushStateToCloud({
-        entries,
-        contactBook,
-        contactNames,
-        contactLinks,
-        templates,
-      }).catch((err) => {
-        setSyncError(
-          err instanceof Error
-            ? err.message
-            : "Erro ao salvar alterações na nuvem."
-        );
-      });
-    }, 600);
-
-    return () => window.clearTimeout(timer);
-  }, [
-    entries,
-    contactBook,
-    contactNames,
-    contactLinks,
-    templates,
-    supabaseConfigured,
-    pushStateToCloud,
-  ]);
-
-  // Refresh from cloud when returning to the app on another device/tab
+  // Keep multiple browsers & devices synchronized cleanly in the background
   useEffect(() => {
     if (!supabaseConfigured) return;
+
+    const refreshQuietly = () => {
+      if (document.visibilityState !== "visible") return;
+      if (pendingMutationsRef.current > 0) return;
+      const activeTag = document.activeElement?.tagName;
+      if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") {
+        return;
+      }
+      void pullStateFromCloud(false, { silent: true });
+    };
+
+    const intervalId = window.setInterval(refreshQuietly, 10000);
     const onVisible = () => {
       if (document.visibilityState === "visible") {
-        void pullStateFromCloud(false);
+        void pullStateFromCloud(false, { silent: true });
       }
     };
+    const onFocus = () => {
+      void pullStateFromCloud(false, { silent: true });
+    };
+
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [supabaseConfigured, pullStateFromCloud]);
 
   const groupsById: Record<string, GroupDefinition> = useMemo(
@@ -519,12 +660,22 @@ export default function App() {
     setEntries((prev) =>
       prev.map((e) => (e.id === id ? { ...e, status } : e))
     );
+    void postCloudAction({
+      action: "update_entry",
+      id,
+      patch: { status },
+    });
   };
 
   const handleMarkSent = (id: string) => {
     setEntries((prev) =>
       prev.map((e) => (e.id === id ? { ...e, messageSent: true } : e))
     );
+    void postCloudAction({
+      action: "update_entry",
+      id,
+      patch: { messageSent: true },
+    });
   };
 
   const enqueueMatchCheck = useCallback(
@@ -553,7 +704,12 @@ export default function App() {
   );
 
   const bindPhoneToPerson = useCallback(
-    (volunteerName: string, rawPhone: string, editedEntryId?: string) => {
+    (
+      volunteerName: string,
+      rawPhone: string,
+      editedEntryId?: string,
+      options?: { allowEmptyPhone?: boolean; skipCloud?: boolean }
+    ) => {
       const cleanName = formatVolunteerName(volunteerName);
       const normKey = normalizeNameKey(cleanName);
       if (!normKey) return;
@@ -566,11 +722,15 @@ export default function App() {
         [normKey]: cleanName,
       }));
 
-      if (trimmedPhone) {
+      if (trimmedPhone || options?.allowEmptyPhone) {
         setContactBook((book) => {
           const next = { ...book };
           for (const k of sameKeys) {
-            next[k] = trimmedPhone;
+            if (trimmedPhone) {
+              next[k] = trimmedPhone;
+            } else if (options?.allowEmptyPhone) {
+              delete next[k];
+            }
           }
           return next;
         });
@@ -590,20 +750,67 @@ export default function App() {
           return e;
         })
       );
+
+      if (!options?.skipCloud) {
+        void postCloudAction({
+          action: "upsert_volunteer",
+          name: cleanName,
+          phone: trimmedPhone,
+          allowEmptyPhone: Boolean(options?.allowEmptyPhone),
+        });
+      }
     },
-    []
+    [postCloudAction]
   );
 
   const handleUpdatePhone = (id: string, phone: string) => {
     const target = entriesRef.current.find((e) => e.id === id);
     if (!target) return;
-    bindPhoneToPerson(target.volunteerName, phone, id);
+    bindPhoneToPerson(target.volunteerName, phone, id, { skipCloud: true });
+
+    if (phoneDebounceTimersRef.current[id]) {
+      window.clearTimeout(phoneDebounceTimersRef.current[id]);
+    }
+    const capturedName = target.volunteerName;
+    phoneDebounceTimersRef.current[id] = window.setTimeout(() => {
+      delete phoneDebounceTimersRef.current[id];
+      const trimmed = phone.trim();
+      void postCloudAction({
+        action: "update_entry",
+        id,
+        patch: { phone: trimmed },
+      });
+      if (trimmed.length >= 8) {
+        void postCloudAction({
+          action: "upsert_volunteer",
+          name: capturedName,
+          phone: trimmed,
+        });
+      }
+    }, 700);
   };
 
   const handleCommitPhone = (id: string, phone: string) => {
     const target = entriesRef.current.find((e) => e.id === id);
-    if (!target || phone.trim().length < 8) return;
-    enqueueMatchCheck(target.volunteerName, phone, entriesRef.current, id);
+    if (!target) return;
+    if (phoneDebounceTimersRef.current[id]) {
+      window.clearTimeout(phoneDebounceTimersRef.current[id]);
+      delete phoneDebounceTimersRef.current[id];
+    }
+    const trimmed = phone.trim();
+    void postCloudAction({
+      action: "update_entry",
+      id,
+      patch: { phone: trimmed },
+    });
+    if (trimmed.length >= 8) {
+      void postCloudAction({
+        action: "upsert_volunteer",
+        name: target.volunteerName,
+        phone: trimmed,
+      });
+      enqueueMatchCheck(target.volunteerName, trimmed, entriesRef.current, id);
+    }
   };
 
   const handleUpdateName = (id: string, volunteerName: string) => {
@@ -627,11 +834,30 @@ export default function App() {
   const handleCommitName = (id: string, volunteerName: string) => {
     const formattedName = formatVolunteerName(volunteerName);
     if (!formattedName) return;
+    const matchedPhone = lookupPhoneInBook(
+      formattedName,
+      contactBookRef.current,
+      contactLinksRef.current
+    );
     const nextEntries = entriesRef.current.map((e) =>
-      e.id === id ? { ...e, volunteerName: formattedName } : e
+      e.id === id
+        ? {
+            ...e,
+            volunteerName: formattedName,
+            phone: e.phone.trim() || matchedPhone || "",
+          }
+        : e
     );
     setEntries(nextEntries);
     const target = nextEntries.find((e) => e.id === id);
+    void postCloudAction({
+      action: "update_entry",
+      id,
+      patch: {
+        volunteerName: formattedName,
+        ...(target?.phone ? { phone: target.phone } : {}),
+      },
+    });
     enqueueMatchCheck(formattedName, target?.phone || "", nextEntries, id);
   };
 
@@ -642,6 +868,7 @@ export default function App() {
       delete next[id];
       return next;
     });
+    void postCloudAction({ action: "delete_entry", id });
   };
 
   const handleAddEntry = (newEntry: {
@@ -695,6 +922,14 @@ export default function App() {
     });
 
     setEntries(nextEntries);
+    void postCloudAction({ action: "upsert_entry", entry: createdEntry });
+    if (normKey) {
+      void postCloudAction({
+        action: "upsert_volunteer",
+        name: cleanName,
+        phone: resolvedPhone,
+      });
+    }
     enqueueMatchCheck(cleanName, resolvedPhone, nextEntries, id);
   };
 
@@ -717,6 +952,9 @@ export default function App() {
       };
     });
     setEntries((prev) => [...prev, ...cloned]);
+    if (cloned.length > 0) {
+      void postCloudAction({ action: "add_entries", entries: cloned });
+    }
   };
 
   const handleApplyImportedEntries = (params: {
@@ -755,6 +993,13 @@ export default function App() {
     setSelectedIds({});
     setSundayISO(params.sundayISO);
     setActiveView("escala");
+
+    void postCloudAction({
+      action: "add_entries",
+      replaceDate: params.replaceExistingForShiftDate ? params.sundayISO : "",
+      replaceShift: params.replaceExistingForShiftDate ? params.shift : "",
+      entries: newItems,
+    });
 
     // Check ambiguous matches for unique imported names
     const checkedKeys = new Set<string>();
@@ -829,6 +1074,23 @@ export default function App() {
     });
 
     setEntries(nextEntries);
+    void postCloudAction({
+      action: "update_entry",
+      id: entryId,
+      patch: {
+        volunteerName: cleanName,
+        phone: resolvedPhone,
+        status: "pendente",
+        messageSent: false,
+      },
+    });
+    if (normKey) {
+      void postCloudAction({
+        action: "upsert_volunteer",
+        name: cleanName,
+        phone: resolvedPhone,
+      });
+    }
     enqueueMatchCheck(cleanName, resolvedPhone, nextEntries, entryId);
   };
 
@@ -862,7 +1124,6 @@ export default function App() {
 
     setContactNames((prev) => ({
       ...prev,
-      [pending.incomingKey]: pending.incomingName,
       [candidate.key]: candidate.displayName,
     }));
 
@@ -883,6 +1144,15 @@ export default function App() {
           return e;
         })
       );
+    }
+
+    void postCloudAction({ action: "upsert_link", link: newLink });
+    if (sharedPhone) {
+      void postCloudAction({
+        action: "upsert_volunteer",
+        name: candidate.displayName,
+        phone: sharedPhone,
+      });
     }
 
     setPendingContactMatches((prev) =>
@@ -935,6 +1205,9 @@ export default function App() {
         const newIds = new Set(newLinks.map((l) => l.id));
         return [...prev.filter((l) => !newIds.has(l.id)), ...newLinks];
       });
+      for (const l of newLinks) {
+        void postCloudAction({ action: "upsert_link", link: l });
+      }
     }
 
     if (targetKey) {
@@ -942,6 +1215,11 @@ export default function App() {
       if (targetPhone) {
         setContactBook((book) => ({ ...book, [targetKey]: targetPhone }));
       }
+      void postCloudAction({
+        action: "upsert_volunteer",
+        name: targetName,
+        phone: targetPhone,
+      });
     }
 
     setPendingContactMatches((prev) =>
@@ -969,6 +1247,7 @@ export default function App() {
 
   const handleRemoveContactLink = (linkId: string) => {
     setContactLinks((prev) => prev.filter((l) => l.id !== linkId));
+    void postCloudAction({ action: "delete_link", id: linkId });
   };
 
   const handleAddVolunteerToDirectory = (name: string, phone: string) => {
@@ -991,7 +1270,7 @@ export default function App() {
       return;
     }
 
-    bindPhoneToPerson(cleanName, phone);
+    bindPhoneToPerson(cleanName, phone, undefined, { allowEmptyPhone: true });
   };
 
   const handleDeleteVolunteerFromDirectory = (primaryKey: string) => {
@@ -1017,6 +1296,10 @@ export default function App() {
           !sameKeys.has(normalizeNameKey(l.nameKeyB))
       )
     );
+    void postCloudAction({
+      action: "delete_volunteer",
+      keys: Array.from(sameKeys),
+    });
   };
 
   const handleRenameVolunteerInDirectory = (
@@ -1027,6 +1310,11 @@ export default function App() {
     const oldKey = normalizeNameKey(oldPrimaryKey);
     const newKey = normalizeNameKey(formattedName);
     if (!oldKey || !newKey || !formattedName) return;
+
+    const existingPhone =
+      contactBookRef.current[newKey]?.trim() ||
+      contactBookRef.current[oldKey]?.trim() ||
+      "";
 
     if (oldKey === newKey) {
       setContactNames((prev) => ({
@@ -1053,13 +1341,14 @@ export default function App() {
               : l.displayNameB,
         }))
       );
+      void postCloudAction({
+        action: "rename_volunteer",
+        oldKey,
+        newName: formattedName,
+        phone: existingPhone,
+      });
       return;
     }
-
-    const existingPhone =
-      contactBookRef.current[newKey]?.trim() ||
-      contactBookRef.current[oldKey]?.trim() ||
-      "";
 
     setContactNames((prev) => {
       const next = { ...prev };
@@ -1117,6 +1406,13 @@ export default function App() {
       }
       return updated;
     });
+
+    void postCloudAction({
+      action: "rename_volunteer",
+      oldKey,
+      newName: formattedName,
+      phone: existingPhone,
+    });
   };
 
   const handleImportExtractedVolunteers = (
@@ -1125,6 +1421,7 @@ export default function App() {
     const workingNames = { ...contactNamesRef.current };
     const nextLinks = [...contactLinksRef.current];
     const pendingList: PendingContactMatch[] = [];
+    const addedNames: string[] = [];
 
     for (const item of items) {
       const cleanName = formatVolunteerName(item.name);
@@ -1144,11 +1441,22 @@ export default function App() {
       if (match) {
         pendingList.push(match);
       } else {
+        if (!workingNames[key]) {
+          addedNames.push(cleanName);
+        }
         workingNames[key] = cleanName;
       }
     }
 
     setContactNames(workingNames);
+
+    for (const nameToSave of addedNames) {
+      void postCloudAction({
+        action: "upsert_volunteer",
+        name: nameToSave,
+        phone: "",
+      });
+    }
 
     if (pendingList.length > 0) {
       setPendingContactMatches((prev) => {
@@ -1164,6 +1472,34 @@ export default function App() {
         ];
       });
     }
+  };
+
+  const handleResetOfficialVolunteers = async () => {
+    const official = buildOfficialInitialContacts();
+    setContactBook(official.book);
+    setContactNames(official.names);
+    if (supabaseConfiguredRef.current) {
+      const res = await postCloudAction({
+        action: "replace_official_volunteers",
+      });
+      if (res?.state) {
+        applyAuthoritativeCloudState(res.state);
+      }
+    }
+  };
+
+  const handleUpdateTemplates = (nextTemplates: MessageTemplatesState) => {
+    setTemplates(nextTemplates);
+    if (templateDebounceTimerRef.current !== null) {
+      window.clearTimeout(templateDebounceTimerRef.current);
+    }
+    templateDebounceTimerRef.current = window.setTimeout(() => {
+      templateDebounceTimerRef.current = null;
+      void postCloudAction({
+        action: "upsert_templates",
+        templates: nextTemplates,
+      });
+    }, 700);
   };
 
   return (
@@ -1232,19 +1568,24 @@ export default function App() {
             contactBook={contactBook}
             contactNames={contactNames}
             contactLinks={contactLinks}
-            onSavePersonPhone={(name, phone) => bindPhoneToPerson(name, phone)}
+            onSavePersonPhone={(name, phone) =>
+              bindPhoneToPerson(name, phone, undefined, {
+                allowEmptyPhone: true,
+              })
+            }
             onAddVolunteer={handleAddVolunteerToDirectory}
             onRenameVolunteer={handleRenameVolunteerInDirectory}
             onDeleteVolunteer={handleDeleteVolunteerFromDirectory}
             onImportExtractedVolunteers={handleImportExtractedVolunteers}
             onRemoveLink={handleRemoveContactLink}
+            onResetOfficialVolunteers={handleResetOfficialVolunteers}
           />
         )}
 
         {activeView === "modelos" && (
           <TemplatesView
             templates={templates}
-            onUpdateTemplates={setTemplates}
+            onUpdateTemplates={handleUpdateTemplates}
             activeSundayISO={sundayISO}
           />
         )}
