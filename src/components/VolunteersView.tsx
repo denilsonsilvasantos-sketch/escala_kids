@@ -13,8 +13,9 @@ import {
   Pencil,
   Check,
   X,
-  Download,
   RotateCcw,
+  FileSpreadsheet,
+  FileText,
 } from "lucide-react";
 import type {
   ContactLink,
@@ -30,7 +31,10 @@ import {
   areNamesPotentialMatch,
 } from "../utils/contacts";
 import { compressImageForUpload } from "../utils/imageUpload";
-import { exportVolunteersToExcel } from "../utils/exportSchedule";
+import {
+  exportVolunteersToExcel,
+  exportVolunteersToPdf,
+} from "../utils/exportSchedule";
 
 interface VolunteersViewProps {
   entries: ScheduleEntry[];
@@ -684,8 +688,17 @@ export function VolunteersView({
                     disabled={peopleList.length === 0}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                   >
-                    <Download className="w-3.5 h-3.5" />
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
                     <span>Exportar Excel</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => exportVolunteersToPdf(peopleList)}
+                    disabled={peopleList.length === 0}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-zinc-900 hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Exportar PDF</span>
                   </button>
                 </div>
               </div>

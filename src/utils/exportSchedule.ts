@@ -251,3 +251,79 @@ export function exportVolunteersToExcel(
   XLSX.writeFile(workbook, "voluntarios-mevam-kids.xlsx");
 }
 
+export function exportVolunteersToPdf(
+  volunteers: { displayName: string; phone: string }[]
+) {
+  const doc = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: "a4",
+  });
+
+  const total = volunteers.length;
+  const comWhatsapp = volunteers.filter((v) => v.phone.trim().length > 0).length;
+  const semWhatsapp = total - comWhatsapp;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.setTextColor(24, 24, 27);
+  doc.text("Cadastro de Voluntários — MEVAM Kids", 14, 18);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(82, 82, 91);
+  doc.text(
+    `Total: ${total} voluntários  ·  Com WhatsApp: ${comWhatsapp}  ·  Sem WhatsApp: ${semWhatsapp}`,
+    14,
+    25
+  );
+
+  autoTable(doc, {
+    startY: 31,
+    head: [["#", "Voluntário", "WhatsApp", "Situação"]],
+    body: volunteers.map((v, idx) => {
+      const hasPhone = v.phone.trim().length > 0;
+      return [
+        String(idx + 1),
+        formatVolunteerName(v.displayName),
+        hasPhone ? formatPhoneDisplay(v.phone) : "—",
+        hasPhone ? "WhatsApp cadastrado" : "Sem número",
+      ];
+    }),
+    styles: {
+      font: "helvetica",
+      fontSize: 9,
+      cellPadding: 2.5,
+      textColor: [24, 24, 27],
+      lineColor: [232, 230, 223],
+      lineWidth: 0.2,
+    },
+    columnStyles: {
+      0: { halign: "right", cellWidth: 12 },
+    },
+    headStyles: {
+      fillColor: [4, 120, 87],
+      textColor: [255, 255, 255],
+      fontStyle: "bold",
+    },
+    alternateRowStyles: {
+      fillColor: [250, 249, 245],
+    },
+    didParseCell: (data) => {
+      if (data.section === "body" && data.column.index === 3) {
+        const vol = volunteers[data.row.index];
+        if (!vol) return;
+        if (vol.phone.trim().length > 0) {
+          data.cell.styles.textColor = [4, 120, 87];
+          data.cell.styles.fontStyle = "bold";
+        } else {
+          data.cell.styles.textColor = [180, 83, 9];
+        }
+      }
+    },
+  });
+
+  doc.save("voluntarios-mevam-kids.pdf");
+}
+
+

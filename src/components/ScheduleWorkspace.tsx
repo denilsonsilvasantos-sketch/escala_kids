@@ -299,6 +299,8 @@ export function ScheduleWorkspace({
   const selectedVisibleCount = visibleEntries.filter(
     (e) => selectedIds[e.id]
   ).length;
+  const allVisibleSelected =
+    visibleEntries.length > 0 && selectedVisibleCount === visibleEntries.length;
 
   // Determine active entry for the sticky right-hand WhatsApp live preview
   const previewEntry = useMemo(() => {
@@ -1023,10 +1025,28 @@ export function ScheduleWorkspace({
             </button>
             <button
               type="button"
-              onClick={() => onSelectMany(visibleEntries.map((e) => e.id))}
-              className="px-3 py-1.5 text-xs font-medium text-zinc-700 bg-[#F4F2EC] hover:bg-[#EAE6DC] rounded-lg whitespace-nowrap transition-colors cursor-pointer"
+              aria-pressed={allVisibleSelected}
+              title={
+                allVisibleSelected
+                  ? "Clique novamente para tirar a seleção de todos"
+                  : "Selecionar todos os voluntários visíveis"
+              }
+              onClick={() => {
+                if (allVisibleSelected) {
+                  onClearSelection();
+                } else {
+                  onSelectMany(visibleEntries.map((e) => e.id));
+                }
+              }}
+              disabled={visibleEntries.length === 0}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                allVisibleSelected
+                  ? "bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
+                  : "text-zinc-700 bg-[#F4F2EC] hover:bg-[#EAE6DC]"
+              }`}
             >
-              Selecionar todos
+              {allVisibleSelected && <Check className="w-3.5 h-3.5" />}
+              <span>Selecionar todos</span>
             </button>
             {selectedVisibleCount > 0 && (
               <>
