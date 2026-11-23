@@ -5,10 +5,16 @@ import type {
   GroupDefinition,
   ScheduleEntry,
   ShiftType,
+  VolunteerProfile,
   VolunteerStatus,
 } from "../types/schedule";
 import { formatDateDDMM, formatPhoneDisplay } from "./dateAndMessage";
-import { formatVolunteerName } from "./contacts";
+import { formatVolunteerName, normalizeNameKey } from "./contacts";
+import {
+  formatBirthdayDDMM,
+  formatShiftPreferenceLabel,
+  ROLE_LABEL_BY_KEY,
+} from "./volunteerRoles";
 
 function getExportStatusLabel(entry: ScheduleEntry): string {
   if (entry.status === "confirmado") return "Confirmado";
@@ -235,15 +241,33 @@ export function exportScheduleToPdf({
 }
 
 export function exportVolunteersToExcel(
-  volunteers: { displayName: string; phone: string }[]
+  volunteers: { primaryKey?: string; displayName: string; phone: string }[],
+  profiles?: Record<string, VolunteerProfile>
 ) {
-  const sheetData = volunteers.map((v) => ({
-    Nome: formatVolunteerName(v.displayName),
-    WhatsApp: v.phone ? formatPhoneDisplay(v.phone) : "",
-  }));
+  const sheetData = volunteers.map((v) => {
+    const key = v.primaryKey || normalizeNameKey(v.displayName);
+    const prof = profiles?.[key];
+    return {
+      Nome: formatVolunteerName(v.displayName),
+      WhatsApp: v.phone ? formatPhoneDisplay(v.phone) : "",
+      Aniversário: prof ? formatBirthdayDDMM(prof.birthDay, prof.birthMonth) : "",
+      Turnos: prof ? formatShiftPreferenceLabel(prof.preferredShifts) : "",
+      Funções: prof
+        ? prof.roles.map((r) => ROLE_LABEL_BY_KEY[r] || r).join(", ")
+        : "",
+      Família: prof?.familyGroupName || "",
+    };
+  });
 
   const worksheet = XLSX.utils.json_to_sheet(sheetData);
-  worksheet["!cols"] = [{ wch: 32 }, { wch: 20 }];
+  worksheet["!cols"] = [
+    { wch: 30 },
+    { wch: 18 },
+    { wch: 13 },
+    { wch: 16 },
+    { wch: 34 },
+    { wch: 22 },
+  ];
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Voluntarios");
@@ -252,7 +276,8 @@ export function exportVolunteersToExcel(
 }
 
 export function exportVolunteersToPdf(
-  volunteers: { displayName: string; phone: string }[]
+  volunteers: { primaryKey?: string; displayName: string; phone: string }[],
+  profiles?: Record<string, VolunteerProfile>
 ) {
   const doc = new jsPDF({
     orientation: "portrait",
@@ -280,26 +305,39 @@ export function exportVolunteersToPdf(
 
   autoTable(doc, {
     startY: 31,
-    head: [["#", "Voluntário", "WhatsApp", "Situação"]],
+    head: [["#", "Voluntário", "WhatsApp", "Aniv.", "Turnos / Funções"]],
     body: volunteers.map((v, idx) => {
       const hasPhone = v.phone.trim().length > 0;
+      const key = v.primaryKey || normalizeNameKey(v.displayName);
+      const prof = profiles?.[key];
+      const bday = prof ? formatBirthdayDDMM(prof.birthDay, prof.birthMonth) : "";
+      const shiftsLabel = prof ? formatShiftPreferenceLabel(prof.preferredShifts) : "";
+      const rolesLabel = prof
+        ? prof.roles.map((r) => ROLE_LABEL_BY_KEY[r] || r).join(", ")
+        : "";
+      const summary = [shiftsLabel, rolesLabel, prof?.familyGroupName]
+        .filter(Boolean)
+        .join(" · ");
       return [
         String(idx + 1),
         formatVolunteerName(v.displayName),
         hasPhone ? formatPhoneDisplay(v.phone) : "—",
-        hasPhone ? "WhatsApp cadastrado" : "Sem número",
+        bday || "—",
+        summary || "—",
       ];
     }),
     styles: {
       font: "helvetica",
-      fontSize: 9,
-      cellPadding: 2.5,
+      fontSize: 8.5,
+      cellPadding: 2.3,
       textColor: [24, 24, 27],
       lineColor: [232, 230, 223],
       lineWidth: 0.2,
     },
     columnStyles: {
-      0: { halign: "right", cellWidth: 12 },
+      0: { halign: "right", cellWidth: 10 },
+      2: { cellWidth: 32 },
+      3: { cellWidth: 16, halign: "center" },
     },
     headStyles: {
       fillColor: [4, 120, 87],
@@ -308,18 +346,6 @@ export function exportVolunteersToPdf(
     },
     alternateRowStyles: {
       fillColor: [250, 249, 245],
-    },
-    didParseCell: (data) => {
-      if (data.section === "body" && data.column.index === 3) {
-        const vol = volunteers[data.row.index];
-        if (!vol) return;
-        if (vol.phone.trim().length > 0) {
-          data.cell.styles.textColor = [4, 120, 87];
-          data.cell.styles.fontStyle = "bold";
-        } else {
-          data.cell.styles.textColor = [180, 83, 9];
-        }
-      }
     },
   });
 

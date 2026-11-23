@@ -30,6 +30,7 @@ import type {
   ScheduleEntry,
   ShiftType,
   StatusFilterType,
+  VolunteerProfile,
   VolunteerStatus,
 } from "../types/schedule";
 import { SCHEDULE_GROUPS } from "../data/initialData";
@@ -74,7 +75,9 @@ interface ScheduleWorkspaceProps {
   earlyOverride: boolean;
   onToggleEarlyOverride: () => void;
   contactBook: Record<string, string>;
+  contactNames?: Record<string, string>;
   contactLinks: ContactLink[];
+  volunteerProfiles?: Record<string, VolunteerProfile>;
   onReplaceVolunteer: (entryId: string, newName: string, newPhone: string) => void;
   onCommitName?: (entryId: string, name: string) => void;
   onCommitPhone?: (entryId: string, phone: string) => void;
@@ -126,7 +129,9 @@ export function ScheduleWorkspace({
   earlyOverride,
   onToggleEarlyOverride,
   contactBook,
+  contactNames = {},
   contactLinks,
+  volunteerProfiles = {},
   onReplaceVolunteer,
   onCommitName,
   onCommitPhone,
@@ -1302,7 +1307,9 @@ export function ScheduleWorkspace({
         entry={replacingEntry}
         group={replacingGroup}
         contactBook={contactBook}
+        contactNames={contactNames}
         contactLinks={contactLinks}
+        volunteerProfiles={volunteerProfiles}
         knownNames={knownNames}
         onClose={() => setReplacingEntryId(null)}
         onConfirmReplace={(entryId, newName, newPhone) => {

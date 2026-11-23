@@ -16,11 +16,18 @@ import {
   RotateCcw,
   FileSpreadsheet,
   FileText,
+  Cake,
+  ExternalLink,
+  Copy,
+  SlidersHorizontal,
 } from "lucide-react";
+import migrationFase1SqlRaw from "../../supabase/migration_fase1.sql?raw";
 import type {
   ContactLink,
   ExtractedVolunteerOccurrence,
+  FamilySyncMode,
   ScheduleEntry,
+  VolunteerProfile,
 } from "../types/schedule";
 import {
   buildKnownDirectory,
@@ -35,12 +42,29 @@ import {
   exportVolunteersToExcel,
   exportVolunteersToPdf,
 } from "../utils/exportSchedule";
+import {
+  buildWhatsAppUrl,
+  formatPhoneDisplay,
+} from "../utils/dateAndMessage";
+import {
+  EMPTY_VOLUNTEER_PROFILE,
+  formatBirthdayDDMM,
+  formatShiftPreferenceLabel,
+  getBirthdayStatus,
+  MONTH_NAMES_PT,
+  renderBirthdayMessage,
+  ROLE_LABEL_BY_KEY,
+} from "../utils/volunteerRoles";
+import { VolunteerProfileModal } from "./VolunteerProfileModal";
 
 interface VolunteersViewProps {
   entries: ScheduleEntry[];
   contactBook: Record<string, string>;
   contactNames: Record<string, string>;
   contactLinks: ContactLink[];
+  volunteerProfiles: Record<string, VolunteerProfile>;
+  birthdayTemplate: string;
+  needsProfileSchemaUpdate?: boolean;
   onSavePersonPhone: (name: string, phone: string) => void;
   onAddVolunteer: (name: string, phone: string) => void;
   onRenameVolunteer: (oldPrimaryKey: string, newName: string) => void;
@@ -48,6 +72,19 @@ interface VolunteersViewProps {
   onImportExtractedVolunteers: (items: ExtractedVolunteerOccurrence[]) => void;
   onRemoveLink: (linkId: string) => void;
   onResetOfficialVolunteers?: () => Promise<void> | void;
+  onSaveVolunteerProfile: (params: {
+    nameKey: string;
+    volunteerName: string;
+    profile: VolunteerProfile;
+    familyUpdate?: {
+      familyGroupId: string;
+      familyGroupName: string;
+      familySyncMode: FamilySyncMode;
+      memberKeys: string[];
+      removedKeys: string[];
+    } | null;
+  }) => void;
+  onMarkBirthdaySent: (nameKey: string, year: number | null) => void;
 }
 
 export function VolunteersView({
@@ -55,6 +92,9 @@ export function VolunteersView({
   contactBook,
   contactNames,
   contactLinks,
+  volunteerProfiles,
+  birthdayTemplate,
+  needsProfileSchemaUpdate = false,
   onSavePersonPhone,
   onAddVolunteer,
   onRenameVolunteer,
@@ -62,13 +102,20 @@ export function VolunteersView({
   onImportExtractedVolunteers,
   onRemoveLink,
   onResetOfficialVolunteers,
+  onSaveVolunteerProfile,
+  onMarkBirthdaySent,
 }: VolunteersViewProps) {
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [search, setSearch] = useState("");
-  const [filterTab, setFilterTab] = useState<"todos" | "com-telefone" | "sem-telefone">("todos");
+  const [filterTab, setFilterTab] = useState<
+    "todos" | "com-telefone" | "sem-telefone" | "aniversariantes" | "sem-perfil"
+  >("todos");
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editingNameDraft, setEditingNameDraft] = useState("");
+  const [profileEditingKey, setProfileEditingKey] = useState<string | null>(null);
+  const [copiedBirthdayKey, setCopiedBirthdayKey] = useState<string | null>(null);
+  const [copiedMigrationSql, setCopiedMigrationSql] = useState(false);
   const [confirmingOfficialReset, setConfirmingOfficialReset] = useState(false);
   const [isResettingOfficial, setIsResettingOfficial] = useState(false);
 
@@ -138,26 +185,131 @@ export function VolunteersView({
     return list.sort((a, b) => a.displayName.localeCompare(b.displayName, "pt-BR"));
   }, [directory, contactLinks]);
 
+  const nowDate = useMemo(() => new Date(), []);
+  const currentYear = nowDate.getFullYear();
+  const currentMonthName = MONTH_NAMES_PT[nowDate.getMonth()] || "";
+
+  const birthdayEntries = useMemo(() => {
+    return peopleList
+      .map((person) => {
+        const profile = volunteerProfiles[person.primaryKey] || EMPTY_VOLUNTEER_PROFILE;
+        const status = getBirthdayStatus(profile.birthDay, profile.birthMonth, nowDate);
+        return {
+          person,
+          profile,
+          status,
+        };
+      })
+      .filter((item) => item.status.hasBirthday)
+      .sort((a, b) => {
+        if (a.status.isToday !== b.status.isToday) return a.status.isToday ? -1 : 1;
+        if (a.status.isCurrentMonth !== b.status.isCurrentMonth) {
+          return a.status.isCurrentMonth ? -1 : 1;
+        }
+        if (a.status.daysUntil !== b.status.daysUntil) {
+          return a.status.daysUntil - b.status.daysUntil;
+        }
+        return a.person.displayName.localeCompare(b.person.displayName, "pt-BR");
+      });
+  }, [peopleList, volunteerProfiles, nowDate]);
+
+  const monthOrTodayBirthdays = useMemo(
+    () =>
+      birthdayEntries.filter(
+        (item) => item.status.isToday || item.status.isCurrentMonth
+      ),
+    [birthdayEntries]
+  );
+
   const stats = useMemo(() => {
     const total = peopleList.length;
     const comTelefone = peopleList.filter((p) => p.phone.trim().length > 0).length;
     const semTelefone = total - comTelefone;
-    return { total, comTelefone, semTelefone };
-  }, [peopleList]);
+    const aniversariantes = birthdayEntries.length;
+    const semPerfil = peopleList.filter((p) => {
+      const prof = volunteerProfiles[p.primaryKey];
+      return (
+        !prof ||
+        (!prof.birthDay &&
+          prof.roles.length === 0 &&
+          prof.preferredShifts.length === 0)
+      );
+    }).length;
+    return { total, comTelefone, semTelefone, aniversariantes, semPerfil };
+  }, [peopleList, birthdayEntries.length, volunteerProfiles]);
 
   const filteredPeople = useMemo(() => {
     const q = normalizeNameKey(search);
-    return peopleList.filter((person) => {
+    const list = peopleList.filter((person) => {
+      const prof = volunteerProfiles[person.primaryKey] || EMPTY_VOLUNTEER_PROFILE;
       if (filterTab === "com-telefone" && !person.phone.trim()) return false;
       if (filterTab === "sem-telefone" && person.phone.trim()) return false;
+      if (filterTab === "aniversariantes" && (!prof.birthDay || !prof.birthMonth)) {
+        return false;
+      }
+      if (
+        filterTab === "sem-perfil" &&
+        ((prof.birthDay && prof.birthMonth) ||
+          prof.roles.length > 0 ||
+          prof.preferredShifts.length > 0)
+      ) {
+        return false;
+      }
       if (!q) return true;
+      const roleLabels = prof.roles
+        .map((r) => ROLE_LABEL_BY_KEY[r] || r)
+        .join(" ");
       return (
         normalizeNameKey(person.displayName).includes(q) ||
         person.aliases.some((a) => normalizeNameKey(a).includes(q)) ||
-        person.phone.includes(search.trim())
+        person.phone.includes(search.trim()) ||
+        normalizeNameKey(roleLabels).includes(q) ||
+        normalizeNameKey(prof.familyGroupName || "").includes(q)
       );
     });
-  }, [peopleList, filterTab, search]);
+
+    if (filterTab === "aniversariantes") {
+      return [...list].sort((a, b) => {
+        const profA = volunteerProfiles[a.primaryKey] || EMPTY_VOLUNTEER_PROFILE;
+        const profB = volunteerProfiles[b.primaryKey] || EMPTY_VOLUNTEER_PROFILE;
+        const stA = getBirthdayStatus(profA.birthDay, profA.birthMonth, nowDate);
+        const stB = getBirthdayStatus(profB.birthDay, profB.birthMonth, nowDate);
+        if (stA.daysUntil !== stB.daysUntil) return stA.daysUntil - stB.daysUntil;
+        return a.displayName.localeCompare(b.displayName, "pt-BR");
+      });
+    }
+
+    return list;
+  }, [peopleList, volunteerProfiles, filterTab, search, nowDate]);
+
+  const profileEditingPerson = useMemo(
+    () =>
+      profileEditingKey
+        ? peopleList.find((p) => p.primaryKey === profileEditingKey) || null
+        : null,
+    [profileEditingKey, peopleList]
+  );
+
+  const handleCopyBirthdayMessage = async (key: string, displayName: string) => {
+    const text = renderBirthdayMessage(birthdayTemplate, displayName);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedBirthdayKey(key);
+      window.setTimeout(() => setCopiedBirthdayKey(null), 1800);
+    } catch {
+      // Ignore clipboard failure
+    }
+  };
+
+  const handleCopyMigrationSql = async () => {
+    try {
+      await navigator.clipboard.writeText(migrationFase1SqlRaw);
+      setCopiedMigrationSql(true);
+      window.setTimeout(() => setCopiedMigrationSql(false), 2200);
+    } catch {
+      // Ignore clipboard failure
+    }
+  };
 
   const handleManualAdd = (e: FormEvent) => {
     e.preventDefault();
@@ -341,7 +493,7 @@ export function VolunteersView({
           </p>
         </div>
 
-        <div className="grid grid-cols-3 divide-x divide-[#EFECE4] border border-[#EFECE4] rounded-xl bg-[#FAF9F5] py-3 px-2 shrink-0">
+        <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-[#EFECE4] border border-[#EFECE4] rounded-xl bg-[#FAF9F5] py-3 px-2 shrink-0">
           <div className="px-4 text-center">
             <div className="text-[11px] font-medium text-zinc-500">Cadastrados</div>
             <div className="text-xl font-bold font-mono-tabular text-zinc-900 mt-0.5">
@@ -360,8 +512,52 @@ export function VolunteersView({
               {stats.semTelefone}
             </div>
           </div>
+          <div className="px-4 text-center">
+            <div className="text-[11px] font-medium text-zinc-500">Aniversários</div>
+            <div className="text-xl font-bold font-mono-tabular text-zinc-900 mt-0.5">
+              {stats.aniversariantes}
+            </div>
+          </div>
         </div>
       </div>
+
+      {needsProfileSchemaUpdate && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div className="text-xs text-amber-950 space-y-1">
+              <div className="font-semibold text-sm">
+                Atualização única necessária no banco Supabase (Fase 1)
+              </div>
+              <p className="text-amber-900 leading-relaxed">
+                Para sincronizar aniversários, funções, turnos e parentesco entre todos os navegadores, execute o script{" "}
+                <code className="font-mono-tabular font-semibold">
+                  supabase/migration_fase1.sql
+                </code>{" "}
+                no SQL Editor do Supabase (ele apenas adiciona colunas novas, sem apagar nenhum dado).
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleCopyMigrationSql}
+            className="min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-amber-800 text-white hover:bg-amber-900 rounded-lg whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+          >
+            {copiedMigrationSql ? (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                <span>SQL copiado!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copiar SQL da Fase 1</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Manual Add + Extract from Image */}
@@ -596,24 +792,175 @@ export function VolunteersView({
           </div>
         </div>
 
-        {/* Right Column: Full Directory */}
+        {/* Right Column: Aniversariantes + Full Directory */}
         <div className="lg:col-span-7 space-y-5">
+          {monthOrTodayBirthdays.length > 0 && (
+            <div className="bg-white border border-[#E8E6DF] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] overflow-hidden">
+              <div className="px-4 sm:px-5 py-3.5 border-b border-[#EFECE4] bg-[#FAF9F5] flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Cake className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <h2 className="font-display text-sm font-bold text-zinc-950">
+                    Aniversariantes de {currentMonthName}
+                  </h2>
+                  <span className="text-zinc-300 text-xs" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="text-xs font-mono-tabular text-zinc-500">
+                    {monthOrTodayBirthdays.length}{" "}
+                    {monthOrTodayBirthdays.length === 1 ? "pessoa" : "pessoas"}
+                  </span>
+                </div>
+                <span className="text-[11px] text-zinc-500">
+                  Mensagem editável na aba Modelos
+                </span>
+              </div>
+
+              <div className="divide-y divide-[#EFECE4] max-h-72 overflow-y-auto">
+                {monthOrTodayBirthdays.map(({ person, profile, status }) => {
+                  const message = renderBirthdayMessage(
+                    birthdayTemplate,
+                    person.displayName
+                  );
+                  const waUrl = buildWhatsAppUrl(person.phone, message);
+                  const hasPhone = person.phone.trim().length > 0;
+                  const alreadySentThisYear =
+                    profile.birthdaySentYear === currentYear;
+
+                  return (
+                    <div
+                      key={`bday-${person.primaryKey}`}
+                      className={`px-4 sm:px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        status.isToday ? "bg-emerald-50/45" : ""
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-zinc-950 truncate">
+                          {person.displayName}
+                        </div>
+                        <div className="text-xs text-zinc-500 mt-0.5 flex flex-wrap items-center gap-x-1.5">
+                          <span className="font-mono-tabular font-semibold text-zinc-800">
+                            {status.ddmm}
+                          </span>
+                          <span className="text-zinc-300" aria-hidden="true">
+                            ·
+                          </span>
+                          {status.isToday ? (
+                            <span className="font-semibold text-emerald-700">
+                              Aniversário hoje!
+                            </span>
+                          ) : status.daysUntil <= 31 ? (
+                            <span>
+                              Em {status.daysUntil}{" "}
+                              {status.daysUntil === 1 ? "dia" : "dias"}
+                            </span>
+                          ) : (
+                            <span>Neste mês</span>
+                          )}
+                          <span className="text-zinc-300" aria-hidden="true">
+                            ·
+                          </span>
+                          <span className="font-mono-tabular">
+                            {hasPhone
+                              ? formatPhoneDisplay(person.phone)
+                              : "Sem WhatsApp"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onMarkBirthdaySent(
+                              person.primaryKey,
+                              alreadySentThisYear ? null : currentYear
+                            )
+                          }
+                          title={
+                            alreadySentThisYear
+                              ? `Desmarcar envio de ${currentYear}`
+                              : `Marcar parabéns como enviado em ${currentYear}`
+                          }
+                          className={`h-8 inline-flex items-center gap-1 px-2.5 text-xs font-medium rounded-lg border whitespace-nowrap transition-colors cursor-pointer ${
+                            alreadySentThisYear
+                              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                              : "bg-white border-[#E5E3DB] text-zinc-600 hover:bg-[#FAF9F5]"
+                          }`}
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>
+                            {alreadySentThisYear
+                              ? `Enviado (${currentYear})`
+                              : "Marcar enviado"}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleCopyBirthdayMessage(
+                              person.primaryKey,
+                              person.displayName
+                            )
+                          }
+                          title="Copiar mensagem de parabéns"
+                          className="h-8 w-8 inline-flex items-center justify-center text-zinc-600 border border-[#E5E3DB] bg-white hover:bg-[#FAF9F5] rounded-lg transition-colors cursor-pointer"
+                        >
+                          {copiedBirthdayKey === person.primaryKey ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-700" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+
+                        {hasPhone ? (
+                          <a
+                            href={waUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() =>
+                              onMarkBirthdaySent(person.primaryKey, currentYear)
+                            }
+                            className="h-8 inline-flex items-center gap-1.5 px-3 text-xs font-medium bg-emerald-700 text-white hover:bg-emerald-800 rounded-lg whitespace-nowrap shrink-0 transition-colors"
+                          >
+                            <span>Enviar parabéns</span>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setProfileEditingKey(person.primaryKey)}
+                            className="h-8 inline-flex items-center gap-1 px-2.5 text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+                          >
+                            <span>Sem número</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="bg-white border border-[#E8E6DF] rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.03)] overflow-hidden">
             <div className="p-4 sm:p-5 border-b border-[#EFECE4] space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center p-1 bg-[#F4F2EC] rounded-lg self-start">
+                <div className="flex flex-wrap items-center gap-1 p-1 bg-[#F4F2EC] rounded-lg self-start">
                   {(
                     [
                       { id: "todos", label: `Todos (${stats.total})` },
                       { id: "com-telefone", label: `Com número (${stats.comTelefone})` },
                       { id: "sem-telefone", label: `Sem número (${stats.semTelefone})` },
+                      { id: "aniversariantes", label: `Aniversariantes (${stats.aniversariantes})` },
+                      { id: "sem-perfil", label: `Sem perfil (${stats.semPerfil})` },
                     ] as const
                   ).map((tab) => (
                     <button
                       key={tab.id}
                       type="button"
                       onClick={() => setFilterTab(tab.id)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap transition-colors cursor-pointer ${
+                      className={`px-2.5 py-1.5 text-xs font-medium rounded-md whitespace-nowrap transition-colors cursor-pointer ${
                         filterTab === tab.id
                           ? "bg-white text-zinc-900 shadow-xs"
                           : "text-zinc-600 hover:text-zinc-900"
@@ -624,13 +971,13 @@ export function VolunteersView({
                   ))}
                 </div>
 
-                <div className="relative w-full sm:w-56">
+                <div className="relative w-full sm:w-56 shrink-0">
                   <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="search"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Buscar nome ou WhatsApp..."
+                    placeholder="Buscar nome, função ou família..."
                     className="w-full pl-8 pr-3 py-1.5 text-xs border border-[#E8E6DF] rounded-lg bg-[#FAF9F5] focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
                   />
                 </div>
@@ -684,7 +1031,7 @@ export function VolunteersView({
                   )}
                   <button
                     type="button"
-                    onClick={() => exportVolunteersToExcel(peopleList)}
+                    onClick={() => exportVolunteersToExcel(peopleList, volunteerProfiles)}
                     disabled={peopleList.length === 0}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                   >
@@ -693,7 +1040,7 @@ export function VolunteersView({
                   </button>
                   <button
                     type="button"
-                    onClick={() => exportVolunteersToPdf(peopleList)}
+                    onClick={() => exportVolunteersToPdf(peopleList, volunteerProfiles)}
                     disabled={peopleList.length === 0}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-zinc-900 hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                   >
@@ -712,6 +1059,30 @@ export function VolunteersView({
               ) : (
                 filteredPeople.map((person) => {
                   const isEditingThis = editingKey === person.primaryKey;
+                  const profile =
+                    volunteerProfiles[person.primaryKey] || EMPTY_VOLUNTEER_PROFILE;
+                  const bdayStr = formatBirthdayDDMM(
+                    profile.birthDay,
+                    profile.birthMonth
+                  );
+                  const bdayStatus = getBirthdayStatus(
+                    profile.birthDay,
+                    profile.birthMonth,
+                    nowDate
+                  );
+                  const shiftLabel = formatShiftPreferenceLabel(
+                    profile.preferredShifts
+                  );
+                  const rolesText = profile.roles
+                    .map((r) => ROLE_LABEL_BY_KEY[r] || r)
+                    .join(", ");
+                  const hasConfiguredProfile = Boolean(
+                    bdayStr ||
+                      profile.roles.length > 0 ||
+                      profile.preferredShifts.length > 0 ||
+                      profile.familyGroupId
+                  );
+
                   const commitEdit = () => {
                     const formatted = formatVolunteerName(editingNameDraft);
                     if (formatted) {
@@ -805,21 +1176,86 @@ export function VolunteersView({
                               </button>
                             </div>
                           )}
-                          <div className="text-xs mt-0.5 truncate">
+
+                          <div className="text-xs mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-zinc-500">
                             {person.aliases.length > 0 ? (
                               <span className="text-emerald-700">
                                 Também vinculado a: {person.aliases.join(", ")}
                               </span>
                             ) : person.phone.trim() ? (
-                              <span className="text-zinc-500">WhatsApp vinculado</span>
+                              <span>WhatsApp vinculado</span>
                             ) : (
-                              <span className="text-amber-700">Sem WhatsApp cadastrado</span>
+                              <span className="text-amber-700">
+                                Sem WhatsApp cadastrado
+                              </span>
+                            )}
+
+                            {bdayStr && (
+                              <>
+                                <span className="text-zinc-300" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span
+                                  className={`font-mono-tabular ${
+                                    bdayStatus.isToday
+                                      ? "font-semibold text-emerald-700"
+                                      : "text-zinc-700"
+                                  }`}
+                                >
+                                  Aniv. {bdayStr}
+                                  {bdayStatus.isToday ? " (Hoje!)" : ""}
+                                </span>
+                              </>
+                            )}
+
+                            {rolesText && (
+                              <>
+                                <span className="text-zinc-300" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="text-zinc-700 truncate max-w-[260px]">
+                                  {rolesText}
+                                </span>
+                              </>
+                            )}
+
+                            {shiftLabel && (
+                              <>
+                                <span className="text-zinc-300" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="text-zinc-600">{shiftLabel}</span>
+                              </>
+                            )}
+
+                            {profile.familyGroupName && (
+                              <>
+                                <span className="text-zinc-300" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="text-emerald-800 font-medium">
+                                  {profile.familyGroupName}
+                                </span>
+                              </>
                             )}
                           </div>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2 w-full sm:w-auto pl-12 sm:pl-0">
+                        <button
+                          type="button"
+                          onClick={() => setProfileEditingKey(person.primaryKey)}
+                          title="Configurar aniversário, funções, turnos e parentesco"
+                          className={`min-h-[38px] inline-flex items-center gap-1.5 px-2.5 text-xs font-medium rounded-lg border whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                            hasConfiguredProfile
+                              ? "bg-emerald-50/70 text-emerald-800 border-emerald-200 hover:bg-emerald-100/70"
+                              : "bg-[#FAF9F5] text-zinc-700 border-[#E5E3DB] hover:bg-[#F2EFE7]"
+                          }`}
+                        >
+                          <SlidersHorizontal className="w-3.5 h-3.5" />
+                          <span>Perfil</span>
+                        </button>
                         <VolunteerPhoneInput
                           initialPhone={person.phone}
                           onCommit={(val) =>
@@ -904,6 +1340,22 @@ export function VolunteersView({
           )}
         </div>
       </div>
+
+      <VolunteerProfileModal
+        isOpen={Boolean(profileEditingPerson)}
+        volunteerKey={profileEditingPerson?.primaryKey || null}
+        volunteerName={profileEditingPerson?.displayName || ""}
+        volunteerPhone={profileEditingPerson?.phone || ""}
+        currentProfile={
+          (profileEditingPerson &&
+            volunteerProfiles[profileEditingPerson.primaryKey]) ||
+          EMPTY_VOLUNTEER_PROFILE
+        }
+        allPeople={peopleList}
+        volunteerProfiles={volunteerProfiles}
+        onClose={() => setProfileEditingKey(null)}
+        onSave={onSaveVolunteerProfile}
+      />
     </div>
   );
 }

@@ -75,3 +75,30 @@ export interface ExtractedVolunteerOccurrence {
 }
 
 export type AppView = "escala" | "voluntarios" | "modelos" | "importar";
+
+export type VolunteerRoleKey =
+  | "louvor"
+  | "professor"
+  | "auxiliar"
+  | "refeitorio"
+  | "aux-refeitorio"
+  | "pipoca"
+  | "aux-pipoca"
+  | "midia"
+  | "seguranca"
+  | "pastor"
+  | "coordenador";
+
+export type FamilySyncMode = "same_shift" | "same_day";
+
+export interface VolunteerProfile {
+  birthDay: number | null;
+  birthMonth: number | null;
+  roles: VolunteerRoleKey[];
+  preferredShifts: ShiftType[];
+  familyGroupId: string;
+  familyGroupName: string;
+  familySyncMode: FamilySyncMode;
+  birthdaySentYear: number | null;
+}
+

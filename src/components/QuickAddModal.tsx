@@ -4,6 +4,7 @@ import type {
   ContactLink,
   GroupDefinition,
   ShiftType,
+  VolunteerProfile,
 } from "../types/schedule";
 import { SCHEDULE_GROUPS } from "../data/initialData";
 import { formatDateDDMM, formatPhoneDisplay } from "../utils/dateAndMessage";
@@ -12,6 +13,11 @@ import {
   lookupPhoneInBook,
   normalizeNameKey,
 } from "../utils/contacts";
+import {
+  formatShiftPreferenceLabel,
+  getRoleKeyForGroupId,
+  ROLE_LABEL_BY_KEY,
+} from "../utils/volunteerRoles";
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -22,6 +28,7 @@ interface QuickAddModalProps {
   contactBook: Record<string, string>;
   contactNames: Record<string, string>;
   contactLinks: ContactLink[];
+  volunteerProfiles?: Record<string, VolunteerProfile>;
   onAddEntry: (entry: {
     date: string;
     shift: ShiftType;
@@ -40,6 +47,7 @@ export function QuickAddModal({
   contactBook,
   contactNames,
   contactLinks,
+  volunteerProfiles = {},
   onAddEntry,
 }: QuickAddModalProps) {
   const [shift, setShift] = useState<ShiftType>(initialShift);
@@ -76,24 +84,74 @@ export function QuickAddModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isOpen, onClose]);
 
+  const targetRoleKey = useMemo(() => getRoleKeyForGroupId(groupId), [groupId]);
+
   const savedSuggestions = useMemo(() => {
     const q = normalizeNameKey(volunteerName);
-    if (!q) return [];
     const seen = new Set<string>();
-    const results: { name: string; phone: string }[] = [];
-    for (const [key, savedPhone] of Object.entries(contactBook)) {
-      const norm = normalizeNameKey(key);
-      if (!norm || !savedPhone.trim() || seen.has(norm)) continue;
+    const allKeys = new Set<string>([
+      ...Object.keys(contactNames),
+      ...Object.keys(contactBook),
+    ]);
+
+    const candidates: {
+      key: string;
+      name: string;
+      phone: string;
+      matchesRole: boolean;
+      matchesShift: boolean;
+      shiftHint: string;
+      familyName: string;
+      score: number;
+    }[] = [];
+
+    for (const rawKey of allKeys) {
+      const norm = normalizeNameKey(rawKey);
+      if (!norm || seen.has(norm)) continue;
+      seen.add(norm);
+
       const display = formatVolunteerName(
-        contactNames[norm] || contactNames[key] || key
+        contactNames[norm] || contactNames[rawKey] || rawKey
       );
-      if (normalizeNameKey(display).includes(q) && normalizeNameKey(display) !== q) {
-        seen.add(norm);
-        results.push({ name: display, phone: savedPhone.trim() });
+      if (!display) continue;
+
+      const savedPhone = (contactBook[norm] || contactBook[rawKey] || "").trim();
+      const prof = volunteerProfiles[norm];
+      const matchesRole = Boolean(prof?.roles?.includes(targetRoleKey));
+      const matchesShift = Boolean(prof?.preferredShifts?.includes(shift));
+
+      if (q) {
+        const normDisplay = normalizeNameKey(display);
+        if (!normDisplay.includes(q) || normDisplay === q) continue;
+      } else {
+        // Without search text, only show volunteers who match role or shift
+        if (!matchesRole && !matchesShift) continue;
       }
+
+      const score =
+        (matchesRole ? 10 : 0) +
+        (matchesShift ? 5 : 0) +
+        (savedPhone ? 1 : 0);
+
+      candidates.push({
+        key: norm,
+        name: display,
+        phone: savedPhone,
+        matchesRole,
+        matchesShift,
+        shiftHint: formatShiftPreferenceLabel(prof?.preferredShifts || []),
+        familyName: prof?.familyGroupName || "",
+        score,
+      });
     }
-    return results.slice(0, 4);
-  }, [volunteerName, contactBook, contactNames]);
+
+    return candidates
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.name.localeCompare(b.name, "pt-BR");
+      })
+      .slice(0, 6);
+  }, [volunteerName, contactBook, contactNames, volunteerProfiles, targetRoleKey, shift]);
 
   if (!isOpen) return null;
 
@@ -245,20 +303,60 @@ export function QuickAddModal({
                 className="w-full px-3 py-2.5 text-sm border border-[#E8E6DF] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
               />
               {savedSuggestions.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {savedSuggestions.map((item) => (
-                    <button
-                      key={item.name}
-                      type="button"
-                      onClick={() => handlePickSuggestion(item.name, item.phone)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors cursor-pointer"
-                    >
-                      <span>{item.name}</span>
-                      <span className="font-mono-tabular text-[11px] text-emerald-700">
-                        {formatPhoneDisplay(item.phone)}
-                      </span>
-                    </button>
-                  ))}
+                <div className="mt-2.5 border border-[#E8E6DF] rounded-xl bg-[#FAF9F5] overflow-hidden">
+                  <div className="px-3 py-1.5 border-b border-[#EFECE4] text-[11px] font-medium text-zinc-500">
+                    {volunteerName.trim()
+                      ? `Sugestões encontradas (${ROLE_LABEL_BY_KEY[targetRoleKey]})`
+                      : `Compatíveis com ${ROLE_LABEL_BY_KEY[targetRoleKey]} · ${shift === "manha" ? "Manhã" : "Noite"}`}
+                  </div>
+                  <div className="divide-y divide-[#EFECE4] max-h-44 overflow-y-auto bg-white">
+                    {savedSuggestions.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => handlePickSuggestion(item.name, item.phone)}
+                        className="w-full px-3 py-2 text-left hover:bg-emerald-50/60 transition-colors cursor-pointer flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-zinc-900 truncate">
+                            {item.name}
+                          </div>
+                          <div className="text-[11px] text-zinc-500 flex flex-wrap items-center gap-x-1.5">
+                            <span className="font-mono-tabular">
+                              {item.phone
+                                ? formatPhoneDisplay(item.phone)
+                                : "Sem WhatsApp"}
+                            </span>
+                            {(item.matchesRole || item.matchesShift) && (
+                              <>
+                                <span className="text-zinc-300" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="text-emerald-700 font-medium">
+                                  {item.matchesRole && item.matchesShift
+                                    ? "Função e turno"
+                                    : item.matchesRole
+                                      ? "Mesma função"
+                                      : `Turno ${item.shiftHint}`}
+                                </span>
+                              </>
+                            )}
+                            {item.familyName && (
+                              <>
+                                <span className="text-zinc-300" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="truncate">{item.familyName}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-[11px] font-medium text-emerald-700 shrink-0">
+                          Selecionar
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

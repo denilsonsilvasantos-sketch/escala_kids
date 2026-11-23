@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { RotateCcw, Check, Copy, Sparkles } from "lucide-react";
+import { RotateCcw, Check, Copy, Sparkles, Cake } from "lucide-react";
 import type {
   GroupDefinition,
   MessageTemplatesState,
@@ -17,6 +17,11 @@ import {
   ROLE_DEFAULT_TEMPLATES,
   ROLE_TEMPLATE_KEYS,
 } from "../utils/dateAndMessage";
+import {
+  BIRTHDAY_TEMPLATE_KEY,
+  DEFAULT_BIRTHDAY_TEMPLATE,
+  renderBirthdayMessage,
+} from "../utils/volunteerRoles";
 import { WhatsAppPreviewCard } from "./WhatsAppPreviewCard";
 
 interface TemplatesViewProps {
@@ -82,6 +87,8 @@ export function TemplatesView({
   const [testHour, setTestHour] = useState<number>(() => new Date().getHours());
   const [copiedPreview, setCopiedPreview] = useState(false);
 
+  const isBirthdayTarget = selectedTarget === BIRTHDAY_TEMPLATE_KEY;
+
   const activeRoleMeta = useMemo(
     () => ROLE_TARGETS.find((r) => r.id === selectedTarget) || null,
     [selectedTarget]
@@ -91,16 +98,20 @@ export function TemplatesView({
     if (
       selectedTarget === "defaultNoite" ||
       selectedTarget === "defaultManha" ||
+      isBirthdayTarget ||
       activeRoleMeta
     ) {
       return undefined;
     }
     return SCHEDULE_GROUPS.find((g) => g.id === selectedTarget);
-  }, [selectedTarget, activeRoleMeta]);
+  }, [selectedTarget, isBirthdayTarget, activeRoleMeta]);
 
   const currentEditorValue = useMemo(() => {
     if (selectedTarget === "defaultNoite") return templates.defaultNoite;
     if (selectedTarget === "defaultManha") return templates.defaultManha;
+    if (isBirthdayTarget) {
+      return templates.groupOverrides[BIRTHDAY_TEMPLATE_KEY] ?? DEFAULT_BIRTHDAY_TEMPLATE;
+    }
     if (activeRoleMeta) {
       return (
         templates.groupOverrides[activeRoleMeta.id] ?? activeRoleMeta.defaultText
@@ -110,7 +121,7 @@ export function TemplatesView({
       return getTemplateForGroup(templates, activeGroup);
     }
     return templates.defaultNoite;
-  }, [selectedTarget, templates, activeRoleMeta, activeGroup]);
+  }, [selectedTarget, templates, isBirthdayTarget, activeRoleMeta, activeGroup]);
 
   const isCustomGroupOverride =
     Boolean(activeGroup) &&
@@ -174,6 +185,13 @@ export function TemplatesView({
         : activeGroup?.shift ?? previewShift;
 
   const previewText = useMemo(() => {
+    if (isBirthdayTarget) {
+      return renderBirthdayMessage(
+        currentEditorValue,
+        "Ana Paula Martins",
+        simulatedNow
+      );
+    }
     const groupLabel =
       selectedTarget === "defaultNoite" || selectedTarget === "defaultManha"
         ? "Louvor 3 a 6 anos"
@@ -188,6 +206,7 @@ export function TemplatesView({
       now: simulatedNow,
     });
   }, [
+    isBirthdayTarget,
     currentEditorValue,
     previewDateISO,
     selectedTarget,
@@ -296,6 +315,29 @@ export function TemplatesView({
                 </button>
               </div>
             </div>
+
+            <div>
+              <div className="text-xs font-medium text-zinc-500 mb-2">
+                Mensagens especiais
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedTarget(BIRTHDAY_TEMPLATE_KEY)}
+                className={`w-full text-left px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer flex items-start gap-2.5 ${
+                  isBirthdayTarget
+                    ? "bg-emerald-50 text-emerald-800"
+                    : "text-zinc-700 hover:bg-zinc-100/70"
+                }`}
+              >
+                <Cake className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <div className="truncate">Felicitação de Aniversário</div>
+                  <div className="text-[11px] font-normal text-zinc-500 truncate">
+                    Enviada pela lista de aniversariantes
+                  </div>
+                </div>
+              </button>
+            </div>
           </div>
 
           <div className="p-4 max-h-[420px] overflow-y-auto space-y-5">
@@ -391,18 +433,22 @@ export function TemplatesView({
                     ? "Padrão Geral — Culto da Noite"
                     : selectedTarget === "defaultManha"
                       ? "Padrão Geral — Culto da Manhã"
-                      : activeRoleMeta
-                        ? activeRoleMeta.label
-                        : `${activeGroup?.label} (${activeGroup?.shift === "manha" ? "Manhã" : "Noite"})`}
+                      : isBirthdayTarget
+                        ? "Mensagem de Feliz Aniversário"
+                        : activeRoleMeta
+                          ? activeRoleMeta.label
+                          : `${activeGroup?.label} (${activeGroup?.shift === "manha" ? "Manhã" : "Noite"})`}
                 </h2>
                 <p className="text-xs text-zinc-500 mt-0.5">
-                  {activeRoleMeta
-                    ? "Aplicado automaticamente para essa função na Manhã e na Noite."
-                    : isCustomGroupOverride
-                      ? "Este grupo usa uma mensagem personalizada."
-                      : selectedTarget.startsWith("default")
-                        ? "Usado por Refeitório, Pipoca, Mídia, Louvor e Liderança neste culto."
-                        : "Usando o padrão da função/turno. Edite abaixo para personalizar só este grupo."}
+                  {isBirthdayTarget
+                    ? "Usada ao clicar em Enviar parabéns na aba Voluntários."
+                    : activeRoleMeta
+                      ? "Aplicado automaticamente para essa função na Manhã e na Noite."
+                      : isCustomGroupOverride
+                        ? "Este grupo usa uma mensagem personalizada."
+                        : selectedTarget.startsWith("default")
+                          ? "Usado por Refeitório, Pipoca, Mídia, Louvor e Liderança neste culto."
+                          : "Usando o padrão da função/turno. Edite abaixo para personalizar só este grupo."}
                 </p>
               </div>
 
@@ -413,7 +459,9 @@ export function TemplatesView({
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>
-                  {selectedTarget.startsWith("default") || activeRoleMeta
+                  {selectedTarget.startsWith("default") ||
+                  activeRoleMeta ||
+                  isBirthdayTarget
                     ? "Restaurar padrão"
                     : "Voltar ao padrão"}
                 </span>
@@ -429,34 +477,55 @@ export function TemplatesView({
               >
                 {"{saudacao}"} → {getGreetingByTime(simulatedNow)}
               </button>
-              <button
-                type="button"
-                onClick={() => insertVariable("{data}")}
-                className="px-2.5 py-1 text-xs font-mono-tabular bg-[#F4F2EC] hover:bg-[#EAE6DC] text-zinc-800 rounded transition-colors cursor-pointer"
-              >
-                {"{data}"} → {formatDateDDMM(previewDateISO)}
-              </button>
-              <button
-                type="button"
-                onClick={() => insertVariable("{culto}")}
-                className="px-2.5 py-1 text-xs font-mono-tabular bg-[#F4F2EC] hover:bg-[#EAE6DC] text-zinc-800 rounded transition-colors cursor-pointer"
-              >
-                {"{culto}"}
-              </button>
-              <button
-                type="button"
-                onClick={() => insertVariable("{grupo}")}
-                className="px-2.5 py-1 text-xs font-mono-tabular bg-[#F4F2EC] hover:bg-[#EAE6DC] text-zinc-800 rounded transition-colors cursor-pointer"
-              >
-                {"{grupo}"}
-              </button>
-              <button
-                type="button"
-                onClick={() => insertVariable("{horario_oracao}")}
-                className="px-2.5 py-1 text-xs font-mono-tabular bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded transition-colors cursor-pointer"
-              >
-                {"{horario_oracao}"} → {getPrayerTimeForShift(effectivePreviewShift)}
-              </button>
+              {isBirthdayTarget ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => insertVariable("{primeiro_nome}")}
+                    className="px-2.5 py-1 text-xs font-mono-tabular bg-[#F4F2EC] hover:bg-[#EAE6DC] text-zinc-800 rounded transition-colors cursor-pointer"
+                  >
+                    {"{primeiro_nome}"} → Ana
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => insertVariable("{nome}")}
+                    className="px-2.5 py-1 text-xs font-mono-tabular bg-[#F4F2EC] hover:bg-[#EAE6DC] text-zinc-800 rounded transition-colors cursor-pointer"
+                  >
+                    {"{nome}"} → Ana Paula Martins
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => insertVariable("{data}")}
+                    className="px-2.5 py-1 text-xs font-mono-tabular bg-[#F4F2EC] hover:bg-[#EAE6DC] text-zinc-800 rounded transition-colors cursor-pointer"
+                  >
+                    {"{data}"} → {formatDateDDMM(previewDateISO)}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => insertVariable("{culto}")}
+                    className="px-2.5 py-1 text-xs font-mono-tabular bg-[#F4F2EC] hover:bg-[#EAE6DC] text-zinc-800 rounded transition-colors cursor-pointer"
+                  >
+                    {"{culto}"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => insertVariable("{grupo}")}
+                    className="px-2.5 py-1 text-xs font-mono-tabular bg-[#F4F2EC] hover:bg-[#EAE6DC] text-zinc-800 rounded transition-colors cursor-pointer"
+                  >
+                    {"{grupo}"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => insertVariable("{horario_oracao}")}
+                    className="px-2.5 py-1 text-xs font-mono-tabular bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded transition-colors cursor-pointer"
+                  >
+                    {"{horario_oracao}"} → {getPrayerTimeForShift(effectivePreviewShift)}
+                  </button>
+                </>
+              )}
             </div>
 
             <textarea
@@ -473,7 +542,7 @@ export function TemplatesView({
               <div>
                 <h3 className="font-display text-sm font-semibold text-zinc-900 flex items-center gap-2">
                   <span>Simulação em tempo real no WhatsApp</span>
-                  {isPreviewSantaCeia && (
+                  {!isBirthdayTarget && isPreviewSantaCeia && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium bg-amber-50 text-amber-900 border border-amber-200 rounded-md">
                       <Sparkles className="w-3 h-3 text-amber-700" />
                       Santa Ceia (1º domingo)
@@ -481,12 +550,14 @@ export function TemplatesView({
                   )}
                 </h3>
                 <p className="text-xs text-zinc-500">
-                  Teste a troca de turno, data (incluindo 1º domingo = Santa Ceia) e horário:
+                  {isBirthdayTarget
+                    ? "Teste a saudação de acordo com o horário do envio:"
+                    : "Teste a troca de turno, data (incluindo 1º domingo = Santa Ceia) e horário:"}
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {!selectedTarget.startsWith("default") && !activeGroup && (
+                {!isBirthdayTarget && !selectedTarget.startsWith("default") && !activeGroup && (
                   <div className="flex items-center gap-1 p-1 bg-[#F4F2EC] rounded-lg">
                     <button
                       type="button"
@@ -538,45 +609,54 @@ export function TemplatesView({
                 </div>
 
                 {/* Sunday tester */}
-                <div className="flex flex-wrap items-center gap-1 p-1 bg-[#F4F2EC] rounded-lg">
-                  {upcomingSundays.map((sunday) => {
-                    const firstSunday = isFirstSundayOfMonth(sunday);
-                    return (
-                      <button
-                        key={sunday}
-                        type="button"
-                        onClick={() => setPreviewDateISO(sunday)}
-                        title={
-                          firstSunday
-                            ? "1º domingo do mês (Culto de Santa Ceia)"
-                            : undefined
-                        }
-                        className={`px-2.5 py-1 text-xs font-mono-tabular font-medium rounded-md transition-colors cursor-pointer ${
-                          previewDateISO === sunday
-                            ? "bg-white text-zinc-900 shadow-xs"
-                            : "text-zinc-600 hover:text-zinc-900"
-                        }`}
-                      >
-                        {formatDateDDMM(sunday)}
-                        {firstSunday ? " · Ceia" : ""}
-                      </button>
-                    );
-                  })}
-                </div>
+                {!isBirthdayTarget && (
+                  <div className="flex flex-wrap items-center gap-1 p-1 bg-[#F4F2EC] rounded-lg">
+                    {upcomingSundays.map((sunday) => {
+                      const firstSunday = isFirstSundayOfMonth(sunday);
+                      return (
+                        <button
+                          key={sunday}
+                          type="button"
+                          onClick={() => setPreviewDateISO(sunday)}
+                          title={
+                            firstSunday
+                              ? "1º domingo do mês (Culto de Santa Ceia)"
+                              : undefined
+                          }
+                          className={`px-2.5 py-1 text-xs font-mono-tabular font-medium rounded-md transition-colors cursor-pointer ${
+                            previewDateISO === sunday
+                              ? "bg-white text-zinc-900 shadow-xs"
+                              : "text-zinc-600 hover:text-zinc-900"
+                          }`}
+                        >
+                          {formatDateDDMM(sunday)}
+                          {firstSunday ? " · Ceia" : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
 
             <WhatsAppPreviewCard
               recipientTitle={
-                selectedTarget === "defaultNoite" || selectedTarget === "defaultManha"
-                  ? "Louvor 3 a 6 anos"
-                  : activeRoleMeta
-                    ? activeRoleMeta.sampleGroupLabel
-                    : activeGroup?.label || "Voluntário"
+                isBirthdayTarget
+                  ? "Ana Paula Martins"
+                  : selectedTarget === "defaultNoite" ||
+                      selectedTarget === "defaultManha"
+                    ? "Louvor 3 a 6 anos"
+                    : activeRoleMeta
+                      ? activeRoleMeta.sampleGroupLabel
+                      : activeGroup?.label || "Voluntário"
               }
-              recipientSubtitle={`Simulação · ${formatDateDDMM(previewDateISO)}${
-                isPreviewSantaCeia ? " · Santa Ceia" : ""
-              }`}
+              recipientSubtitle={
+                isBirthdayTarget
+                  ? "Simulação · Aniversariante"
+                  : `Simulação · ${formatDateDDMM(previewDateISO)}${
+                      isPreviewSantaCeia ? " · Santa Ceia" : ""
+                    }`
+              }
               message={previewText}
               timeLabel={`${String(testHour).padStart(2, "0")}:00`}
             />

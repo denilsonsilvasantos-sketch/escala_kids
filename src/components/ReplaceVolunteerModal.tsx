@@ -4,15 +4,27 @@ import type {
   ContactLink,
   GroupDefinition,
   ScheduleEntry,
+  VolunteerProfile,
 } from "../types/schedule";
-import { formatDateDDMM } from "../utils/dateAndMessage";
-import { formatVolunteerName, lookupPhoneInBook } from "../utils/contacts";
+import { formatDateDDMM, formatPhoneDisplay } from "../utils/dateAndMessage";
+import {
+  formatVolunteerName,
+  lookupPhoneInBook,
+  normalizeNameKey,
+} from "../utils/contacts";
+import {
+  formatShiftPreferenceLabel,
+  getRoleKeyForGroupId,
+  ROLE_LABEL_BY_KEY,
+} from "../utils/volunteerRoles";
 
 interface ReplaceVolunteerModalProps {
   entry: ScheduleEntry | null;
   group?: GroupDefinition;
   contactBook: Record<string, string>;
+  contactNames?: Record<string, string>;
   contactLinks: ContactLink[];
+  volunteerProfiles?: Record<string, VolunteerProfile>;
   knownNames: string[];
   onClose: () => void;
   onConfirmReplace: (entryId: string, newName: string, newPhone: string) => void;
@@ -22,7 +34,9 @@ export function ReplaceVolunteerModal({
   entry,
   group,
   contactBook,
+  contactNames = {},
   contactLinks,
+  volunteerProfiles = {},
   knownNames,
   onClose,
   onConfirmReplace,
@@ -39,15 +53,84 @@ export function ReplaceVolunteerModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [entry, onClose]);
 
+  const targetRoleKey = entry ? getRoleKeyForGroupId(entry.groupId) : "auxiliar";
+
   const suggestions = useMemo(() => {
     if (!entry) return [];
-    const currentLower = entry.volunteerName.trim().toLowerCase();
-    const query = newName.trim().toLowerCase();
-    return knownNames
-      .filter((n) => n.toLowerCase() !== currentLower)
-      .filter((n) => (query ? n.toLowerCase().includes(query) : true))
+    const currentKey = normalizeNameKey(entry.volunteerName);
+    const queryKey = normalizeNameKey(newName);
+
+    const candidateMap = new Map<string, string>();
+    for (const [k, disp] of Object.entries(contactNames)) {
+      const norm = normalizeNameKey(k);
+      if (norm) candidateMap.set(norm, formatVolunteerName(disp || k));
+    }
+    for (const k of Object.keys(contactBook)) {
+      const norm = normalizeNameKey(k);
+      if (norm && !candidateMap.has(norm)) {
+        candidateMap.set(norm, formatVolunteerName(k));
+      }
+    }
+    for (const n of knownNames) {
+      const formatted = formatVolunteerName(n);
+      const norm = normalizeNameKey(formatted);
+      if (norm && !candidateMap.has(norm)) {
+        candidateMap.set(norm, formatted);
+      }
+    }
+
+    const list: {
+      key: string;
+      name: string;
+      phone: string;
+      matchesRole: boolean;
+      matchesShift: boolean;
+      shiftHint: string;
+      score: number;
+    }[] = [];
+
+    for (const [normKey, displayName] of candidateMap.entries()) {
+      if (!displayName || normKey === currentKey) continue;
+      if (queryKey && !normKey.includes(queryKey)) continue;
+
+      const prof = volunteerProfiles[normKey];
+      const matchesRole = Boolean(prof?.roles?.includes(targetRoleKey));
+      const matchesShift = Boolean(prof?.preferredShifts?.includes(entry.shift));
+      const savedPhone =
+        lookupPhoneInBook(displayName, contactBook, contactLinks) || "";
+
+      const score =
+        (matchesRole ? 10 : 0) +
+        (matchesShift ? 5 : 0) +
+        (savedPhone ? 1 : 0);
+
+      list.push({
+        key: normKey,
+        name: displayName,
+        phone: savedPhone,
+        matchesRole,
+        matchesShift,
+        shiftHint: formatShiftPreferenceLabel(prof?.preferredShifts || []),
+        score,
+      });
+    }
+
+    return list
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.name.localeCompare(b.name, "pt-BR");
+      })
       .slice(0, 8);
-  }, [entry, knownNames, newName]);
+  }, [
+    entry,
+    knownNames,
+    contactNames,
+    contactBook,
+    contactLinks,
+    volunteerProfiles,
+    targetRoleKey,
+    newName,
+  ]);
 
   if (!entry) return null;
 
@@ -130,19 +213,48 @@ export function ReplaceVolunteerModal({
             </div>
 
             {suggestions.length > 0 && (
-              <div>
-                <div className="text-[11px] font-medium text-zinc-500 mb-1.5">
-                  Sugestões rápidas da equipe:
+              <div className="border border-[#E8E6DF] rounded-xl bg-[#FAF9F5] overflow-hidden">
+                <div className="px-3 py-1.5 border-b border-[#EFECE4] text-[11px] font-medium text-zinc-500">
+                  Sugestões para {ROLE_LABEL_BY_KEY[targetRoleKey]} ·{" "}
+                  {entry.shift === "manha" ? "Manhã" : "Noite"}
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {suggestions.map((name) => (
+                <div className="divide-y divide-[#EFECE4] max-h-44 overflow-y-auto bg-white">
+                  {suggestions.map((item) => (
                     <button
-                      key={name}
+                      key={item.key}
                       type="button"
-                      onClick={() => handlePickName(name)}
-                      className="px-2.5 py-1.5 text-xs font-medium text-zinc-700 bg-[#F4F2EC] hover:bg-[#EAE6DC] rounded-md transition-colors cursor-pointer"
+                      onClick={() => handlePickName(item.name)}
+                      className="w-full px-3 py-2 text-left hover:bg-emerald-50/60 transition-colors cursor-pointer flex items-center justify-between gap-2"
                     >
-                      {name}
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-zinc-900 truncate">
+                          {item.name}
+                        </div>
+                        <div className="text-[11px] text-zinc-500 flex flex-wrap items-center gap-x-1.5">
+                          <span className="font-mono-tabular">
+                            {item.phone
+                              ? formatPhoneDisplay(item.phone)
+                              : "Sem WhatsApp"}
+                          </span>
+                          {(item.matchesRole || item.matchesShift) && (
+                            <>
+                              <span className="text-zinc-300" aria-hidden="true">
+                                ·
+                              </span>
+                              <span className="text-emerald-700 font-medium">
+                                {item.matchesRole && item.matchesShift
+                                  ? "Função e turno"
+                                  : item.matchesRole
+                                    ? "Mesma função"
+                                    : `Turno ${item.shiftHint}`}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-medium text-emerald-700 shrink-0">
+                        Escolher
+                      </span>
                     </button>
                   ))}
                 </div>

@@ -21,11 +21,13 @@ import type {
   ContactLink,
   ContactMatchCandidate,
   ExtractedVolunteerOccurrence,
+  FamilySyncMode,
   GroupDefinition,
   MessageTemplatesState,
   PendingContactMatch,
   ScheduleEntry,
   ShiftType,
+  VolunteerProfile,
   VolunteerStatus,
 } from "./types/schedule";
 import {
@@ -42,6 +44,12 @@ import {
   normalizeContactBookKeys,
   normalizeNameKey,
 } from "./utils/contacts";
+import {
+  BIRTHDAY_TEMPLATE_KEY,
+  DEFAULT_BIRTHDAY_TEMPLATE,
+  EMPTY_VOLUNTEER_PROFILE,
+  normalizeVolunteerProfile,
+} from "./utils/volunteerRoles";
 
 const STORAGE_ENTRIES_KEY = "escala-kids:entries:v1";
 const STORAGE_MIGRATION_V2_KEY = "escala-kids:migrated-extra-roles:v2";
@@ -49,6 +57,7 @@ const STORAGE_TEMPLATES_KEY = "escala-kids:templates:v1";
 const STORAGE_CONTACTS_KEY = "escala-kids:contacts:v2";
 const STORAGE_CONTACT_NAMES_KEY = "escala-kids:contact-names:v2";
 const STORAGE_CONTACT_LINKS_KEY = "escala-kids:contact-links:v1";
+const STORAGE_PROFILES_KEY = "escala-kids:profiles:v1";
 const STORAGE_CLOUD_ENTRIES_SEEDED_KEY = "escala-kids:cloud-entries-seeded:v1";
 
 function buildOfficialInitialContacts(): {
@@ -232,6 +241,20 @@ export default function App() {
   const [contactLinks, setContactLinks] = useState<ContactLink[]>(() =>
     loadJson<ContactLink[]>(STORAGE_CONTACT_LINKS_KEY, [])
   );
+  const [volunteerProfiles, setVolunteerProfiles] = useState<
+    Record<string, VolunteerProfile>
+  >(() => {
+    const raw = loadJson<Record<string, Partial<VolunteerProfile>>>(
+      STORAGE_PROFILES_KEY,
+      {}
+    );
+    const out: Record<string, VolunteerProfile> = {};
+    for (const [k, v] of Object.entries(raw || {})) {
+      const norm = normalizeNameKey(k);
+      if (norm) out[norm] = normalizeVolunteerProfile(v);
+    }
+    return out;
+  });
 
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
   const [earlyOverrideByDate, setEarlyOverrideByDate] = useState<
@@ -254,6 +277,8 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [needsSchemaSetup, setNeedsSchemaSetup] = useState(false);
+  const [needsProfileSchemaUpdate, setNeedsProfileSchemaUpdate] =
+    useState(false);
 
   const pendingMutationsRef = useRef(0);
   const phoneDebounceTimersRef = useRef<Record<string, number>>({});
@@ -317,12 +342,25 @@ export default function App() {
     }
   }, [contactLinks]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_PROFILES_KEY,
+        JSON.stringify(volunteerProfiles)
+      );
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [volunteerProfiles]);
+
   const applyAuthoritativeCloudState = useCallback(
     (data: {
       entries?: unknown;
       contactBook?: unknown;
       contactNames?: unknown;
       contactLinks?: unknown;
+      volunteerProfiles?: unknown;
+      needsProfileSchemaUpdate?: boolean;
       templates?: unknown;
     }) => {
       const cloudEntries = Array.isArray(data.entries)
@@ -360,6 +398,26 @@ export default function App() {
       setContactBook(normalizedCloud.book);
       setContactNames(normalizedCloud.names);
       setContactLinks(cloudLinks);
+
+      if (typeof data.needsProfileSchemaUpdate === "boolean") {
+        setNeedsProfileSchemaUpdate(data.needsProfileSchemaUpdate);
+      }
+
+      if (
+        !data.needsProfileSchemaUpdate &&
+        data.volunteerProfiles &&
+        typeof data.volunteerProfiles === "object"
+      ) {
+        const nextProfiles: Record<string, VolunteerProfile> = {};
+        for (const [k, rawProf] of Object.entries(
+          data.volunteerProfiles as Record<string, Partial<VolunteerProfile>>
+        )) {
+          const norm = normalizeNameKey(k);
+          if (norm) nextProfiles[norm] = normalizeVolunteerProfile(rawProf);
+        }
+        setVolunteerProfiles(nextProfiles);
+      }
+
       if (upgradedCloudTemplates) {
         setTemplates(upgradedCloudTemplates.templates);
       }
@@ -391,6 +449,7 @@ export default function App() {
         let data: {
           configured?: boolean;
           needsSchemaSetup?: boolean;
+          needsProfileSchemaUpdate?: boolean;
           error?: string;
           state?: Record<string, unknown>;
         } = {};
@@ -401,9 +460,19 @@ export default function App() {
         }
         if (!res.ok) {
           if (data.needsSchemaSetup) setNeedsSchemaSetup(true);
+          if (data.needsProfileSchemaUpdate) {
+            setNeedsProfileSchemaUpdate(true);
+          }
           throw new Error(data.error || "Erro ao salvar alteração na nuvem.");
         }
         setNeedsSchemaSetup(false);
+        if (
+          actionBody.action === "upsert_volunteer_profile" ||
+          actionBody.action === "update_family_group" ||
+          actionBody.action === "mark_birthday_sent"
+        ) {
+          setNeedsProfileSchemaUpdate(false);
+        }
         setSyncError(null);
         return data;
       } catch (err) {
@@ -470,11 +539,13 @@ export default function App() {
         let data: {
           configured?: boolean;
           needsSchemaSetup?: boolean;
+          needsProfileSchemaUpdate?: boolean;
           error?: string;
           entries?: unknown;
           contactBook?: unknown;
           contactNames?: unknown;
           contactLinks?: unknown;
+          volunteerProfiles?: unknown;
           templates?: unknown;
         } = {};
         try {
@@ -497,6 +568,7 @@ export default function App() {
           throw new Error(data.error || "Erro ao carregar dados da nuvem.");
         }
         setNeedsSchemaSetup(false);
+        setNeedsProfileSchemaUpdate(Boolean(data.needsProfileSchemaUpdate));
 
         const cloudEntries = Array.isArray(data.entries)
           ? (data.entries as RawStoredEntry[]).map(normalizeEntry)
@@ -1296,6 +1368,13 @@ export default function App() {
           !sameKeys.has(normalizeNameKey(l.nameKeyB))
       )
     );
+    setVolunteerProfiles((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (sameKeys.has(normalizeNameKey(k))) delete next[k];
+      }
+      return next;
+    });
     void postCloudAction({
       action: "delete_volunteer",
       keys: Array.from(sameKeys),
@@ -1407,6 +1486,14 @@ export default function App() {
       return updated;
     });
 
+    setVolunteerProfiles((prev) => {
+      if (!prev[oldKey]) return prev;
+      const next = { ...prev };
+      next[newKey] = next[newKey] || next[oldKey];
+      delete next[oldKey];
+      return next;
+    });
+
     void postCloudAction({
       action: "rename_volunteer",
       oldKey,
@@ -1502,6 +1589,96 @@ export default function App() {
     }, 700);
   };
 
+  const handleSaveVolunteerProfile = ({
+    nameKey,
+    volunteerName,
+    profile,
+    familyUpdate,
+  }: {
+    nameKey: string;
+    volunteerName: string;
+    profile: VolunteerProfile;
+    familyUpdate?: {
+      familyGroupId: string;
+      familyGroupName: string;
+      familySyncMode: FamilySyncMode;
+      memberKeys: string[];
+      removedKeys: string[];
+    } | null;
+  }) => {
+    const normKey = normalizeNameKey(nameKey);
+    if (!normKey) return;
+    const cleanProfile = normalizeVolunteerProfile(profile);
+
+    setVolunteerProfiles((prev) => {
+      const next = { ...prev, [normKey]: cleanProfile };
+      if (familyUpdate) {
+        if (familyUpdate.familyGroupId && familyUpdate.memberKeys.length > 0) {
+          for (const mKey of familyUpdate.memberKeys) {
+            const normMember = normalizeNameKey(mKey);
+            if (!normMember) continue;
+            const existingProf =
+              normMember === normKey
+                ? cleanProfile
+                : next[normMember] || EMPTY_VOLUNTEER_PROFILE;
+            next[normMember] = {
+              ...existingProf,
+              familyGroupId: familyUpdate.familyGroupId,
+              familyGroupName: familyUpdate.familyGroupName,
+              familySyncMode: familyUpdate.familySyncMode,
+            };
+          }
+        }
+        for (const rKey of familyUpdate.removedKeys) {
+          const normRemoved = normalizeNameKey(rKey);
+          if (!normRemoved || !next[normRemoved]) continue;
+          next[normRemoved] = {
+            ...next[normRemoved],
+            familyGroupId: "",
+            familyGroupName: "",
+            familySyncMode: "same_shift",
+          };
+        }
+      }
+      return next;
+    });
+
+    void (async () => {
+      await postCloudAction({
+        action: "upsert_volunteer_profile",
+        nameKey: normKey,
+        volunteerName,
+        profile: cleanProfile,
+      });
+      if (familyUpdate) {
+        await postCloudAction({
+          action: "update_family_group",
+          ...familyUpdate,
+        });
+      }
+    })();
+  };
+
+  const handleMarkBirthdaySent = (nameKey: string, year: number | null) => {
+    const normKey = normalizeNameKey(nameKey);
+    if (!normKey) return;
+    setVolunteerProfiles((prev) => {
+      const existing = prev[normKey] || EMPTY_VOLUNTEER_PROFILE;
+      return {
+        ...prev,
+        [normKey]: {
+          ...existing,
+          birthdaySentYear: year,
+        },
+      };
+    });
+    void postCloudAction({
+      action: "mark_birthday_sent",
+      nameKey: normKey,
+      year,
+    });
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F7F6F2] text-zinc-900 overflow-x-hidden">
       <Header
@@ -1556,7 +1733,9 @@ export default function App() {
               }))
             }
             contactBook={contactBook}
+            contactNames={contactNames}
             contactLinks={contactLinks}
+            volunteerProfiles={volunteerProfiles}
             onReplaceVolunteer={handleReplaceVolunteer}
             onOpenTestSend={() => setIsTestSendOpen(true)}
           />
@@ -1568,6 +1747,12 @@ export default function App() {
             contactBook={contactBook}
             contactNames={contactNames}
             contactLinks={contactLinks}
+            volunteerProfiles={volunteerProfiles}
+            birthdayTemplate={
+              templates.groupOverrides[BIRTHDAY_TEMPLATE_KEY] ??
+              DEFAULT_BIRTHDAY_TEMPLATE
+            }
+            needsProfileSchemaUpdate={needsProfileSchemaUpdate}
             onSavePersonPhone={(name, phone) =>
               bindPhoneToPerson(name, phone, undefined, {
                 allowEmptyPhone: true,
@@ -1579,6 +1764,8 @@ export default function App() {
             onImportExtractedVolunteers={handleImportExtractedVolunteers}
             onRemoveLink={handleRemoveContactLink}
             onResetOfficialVolunteers={handleResetOfficialVolunteers}
+            onSaveVolunteerProfile={handleSaveVolunteerProfile}
+            onMarkBirthdaySent={handleMarkBirthdaySent}
           />
         )}
 
@@ -1620,6 +1807,7 @@ export default function App() {
         contactBook={contactBook}
         contactNames={contactNames}
         contactLinks={contactLinks}
+        volunteerProfiles={volunteerProfiles}
         onAddEntry={handleAddEntry}
       />
 
@@ -1637,6 +1825,7 @@ export default function App() {
         isSyncing={isSyncing}
         syncError={syncError}
         needsSchemaSetup={needsSchemaSetup}
+        needsProfileSchemaUpdate={needsProfileSchemaUpdate}
         onRefreshFromCloud={() => pullStateFromCloud(false)}
       />
 

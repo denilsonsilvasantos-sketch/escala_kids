@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { X, RefreshCw, Copy, Check, AlertCircle } from "lucide-react";
 import schemaSqlRaw from "../../supabase/schema.sql?raw";
+import migrationFase1SqlRaw from "../../supabase/migration_fase1.sql?raw";
 
 interface CloudSyncModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface CloudSyncModalProps {
   isSyncing: boolean;
   syncError: string | null;
   needsSchemaSetup: boolean;
+  needsProfileSchemaUpdate?: boolean;
   onRefreshFromCloud: () => Promise<void>;
 }
 
@@ -19,9 +21,11 @@ export function CloudSyncModal({
   isSyncing,
   syncError,
   needsSchemaSetup,
+  needsProfileSchemaUpdate = false,
   onRefreshFromCloud,
 }: CloudSyncModalProps) {
   const [copiedSql, setCopiedSql] = useState(false);
+  const [copiedMigrationSql, setCopiedMigrationSql] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -39,6 +43,16 @@ export function CloudSyncModal({
       await navigator.clipboard.writeText(schemaSqlRaw);
       setCopiedSql(true);
       window.setTimeout(() => setCopiedSql(false), 2000);
+    } catch {
+      // Ignore clipboard failure
+    }
+  };
+
+  const handleCopyMigrationSql = async () => {
+    try {
+      await navigator.clipboard.writeText(migrationFase1SqlRaw);
+      setCopiedMigrationSql(true);
+      window.setTimeout(() => setCopiedMigrationSql(false), 2000);
     } catch {
       // Ignore clipboard failure
     }
@@ -155,6 +169,43 @@ export function CloudSyncModal({
                       )}
                     </button>
                   )}
+                </div>
+              )}
+
+              {needsProfileSchemaUpdate && (
+                <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-2.5">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-700" />
+                    <div>
+                      <div className="font-semibold text-amber-950">
+                        Atualização do banco para perfis (Fase 1)
+                      </div>
+                      <p className="mt-0.5 leading-relaxed">
+                        Execute o script{" "}
+                        <code className="font-mono-tabular font-semibold">
+                          supabase/migration_fase1.sql
+                        </code>{" "}
+                        no SQL Editor do Supabase para salvar aniversários, funções, turnos e parentesco na nuvem.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCopyMigrationSql}
+                    className="w-full min-h-[40px] inline-flex items-center justify-center gap-2 px-3 text-xs font-medium bg-white border border-amber-300 text-amber-950 hover:bg-amber-100/60 rounded-lg transition-colors cursor-pointer"
+                  >
+                    {copiedMigrationSql ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>SQL da Fase 1 copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copiar SQL de atualização (Fase 1)</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               )}
 

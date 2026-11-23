@@ -108,6 +108,149 @@ function isMissingTableError(err: { code?: string; message?: string } | null): b
   );
 }
 
+function isMissingColumnError(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  const msg = (err.message || "").toLowerCase();
+  return (
+    err.code === "42703" ||
+    err.code === "PGRST204" ||
+    msg.includes("column") ||
+    msg.includes("could not find the")
+  );
+}
+
+const CONTACTS_BASE_SELECT = "name_key, volunteer_name, phone";
+const CONTACTS_EXTENDED_SELECT =
+  "name_key, volunteer_name, phone, birth_day, birth_month, roles, preferred_shifts, family_group_id, family_group_name, family_sync_mode, birthday_sent_year";
+
+const ALLOWED_ROLE_KEYS = new Set([
+  "louvor",
+  "professor",
+  "auxiliar",
+  "refeitorio",
+  "aux-refeitorio",
+  "pipoca",
+  "aux-pipoca",
+  "midia",
+  "seguranca",
+  "pastor",
+  "coordenador",
+]);
+
+function sanitizeProfileFromRow(row: Record<string, unknown>) {
+  const birthMonth =
+    typeof row.birth_month === "number" &&
+    Number.isInteger(row.birth_month) &&
+    row.birth_month >= 1 &&
+    row.birth_month <= 12
+      ? row.birth_month
+      : null;
+  const birthDay =
+    birthMonth &&
+    typeof row.birth_day === "number" &&
+    Number.isInteger(row.birth_day) &&
+    row.birth_day >= 1 &&
+    row.birth_day <= 31
+      ? row.birth_day
+      : null;
+  const roles = Array.isArray(row.roles)
+    ? Array.from(
+        new Set(
+          row.roles.map((r) => String(r)).filter((r) => ALLOWED_ROLE_KEYS.has(r))
+        )
+      )
+    : [];
+  const preferredShifts = Array.isArray(row.preferred_shifts)
+    ? Array.from(
+        new Set(
+          row.preferred_shifts
+            .map((s) => String(s))
+            .filter((s) => s === "manha" || s === "noite")
+        )
+      )
+    : [];
+  const familyGroupId =
+    typeof row.family_group_id === "string" ? row.family_group_id.trim() : "";
+  const familyGroupName =
+    typeof row.family_group_name === "string" ? row.family_group_name.trim() : "";
+  const familySyncMode =
+    row.family_sync_mode === "same_day" ? "same_day" : "same_shift";
+  const birthdaySentYear =
+    typeof row.birthday_sent_year === "number" &&
+    Number.isInteger(row.birthday_sent_year) &&
+    row.birthday_sent_year >= 2020
+      ? row.birthday_sent_year
+      : null;
+
+  return {
+    birthDay,
+    birthMonth,
+    roles,
+    preferredShifts,
+    familyGroupId,
+    familyGroupName,
+    familySyncMode,
+    birthdaySentYear,
+  };
+}
+
+function sanitizeIncomingProfile(raw: Record<string, unknown> | undefined | null) {
+  const birthMonth =
+    typeof raw?.birthMonth === "number" &&
+    Number.isInteger(raw.birthMonth) &&
+    raw.birthMonth >= 1 &&
+    raw.birthMonth <= 12
+      ? raw.birthMonth
+      : null;
+  const birthDay =
+    birthMonth &&
+    typeof raw?.birthDay === "number" &&
+    Number.isInteger(raw.birthDay) &&
+    raw.birthDay >= 1 &&
+    raw.birthDay <= 31
+      ? raw.birthDay
+      : null;
+  const roles = Array.isArray(raw?.roles)
+    ? Array.from(
+        new Set(
+          raw.roles.map((r) => String(r)).filter((r) => ALLOWED_ROLE_KEYS.has(r))
+        )
+      )
+    : [];
+  const preferredShifts = Array.isArray(raw?.preferredShifts)
+    ? Array.from(
+        new Set(
+          raw.preferredShifts
+            .map((s) => String(s))
+            .filter((s) => s === "manha" || s === "noite")
+        )
+      )
+    : [];
+  const familyGroupId =
+    typeof raw?.familyGroupId === "string" ? raw.familyGroupId.trim() : "";
+  const familyGroupName =
+    typeof raw?.familyGroupName === "string" ? raw.familyGroupName.trim() : "";
+  const familySyncMode =
+    raw?.familySyncMode === "same_day" ? "same_day" : "same_shift";
+  const birthdaySentYear =
+    typeof raw?.birthdaySentYear === "number" &&
+    Number.isInteger(raw.birthdaySentYear) &&
+    raw.birthdaySentYear >= 2020
+      ? raw.birthdaySentYear
+      : null;
+
+  return {
+    birth_day: birthDay,
+    birth_month: birthMonth,
+    roles,
+    preferred_shifts: preferredShifts,
+    family_group_id: familyGroupId,
+    family_group_name: familyGroupName,
+    family_sync_mode: familySyncMode,
+    birthday_sent_year: birthdaySentYear,
+  };
+}
+
 const LOWERCASE_NAME_CONNECTORS = new Set([
   "e",
   "de",
@@ -579,24 +722,42 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
       return { status: 200, body: { configured: false } };
     }
 
-    const [entriesRes, contactsRes, linksRes, templatesRes] = await Promise.all([
-      db
-        .from("escala_entries")
-        .select(
-          "id, date, shift, group_id, volunteer_name, phone, status, message_sent"
-        ),
-      db.from("escala_contacts").select("name_key, volunteer_name, phone"),
-      db
-        .from("escala_contact_links")
-        .select(
-          "id, name_key_a, name_key_b, display_name_a, display_name_b, relation"
-        ),
-      db
-        .from("escala_templates")
-        .select("default_noite, default_manha, group_overrides")
-        .eq("id", "default")
-        .maybeSingle(),
-    ]);
+    const [entriesRes, extendedContactsRes, linksRes, templatesRes] =
+      await Promise.all([
+        db
+          .from("escala_entries")
+          .select(
+            "id, date, shift, group_id, volunteer_name, phone, status, message_sent"
+          ),
+        db.from("escala_contacts").select(CONTACTS_EXTENDED_SELECT),
+        db
+          .from("escala_contact_links")
+          .select(
+            "id, name_key_a, name_key_b, display_name_a, display_name_b, relation"
+          ),
+        db
+          .from("escala_templates")
+          .select("default_noite, default_manha, group_overrides")
+          .eq("id", "default")
+          .maybeSingle(),
+      ]);
+
+    let contactsRes: { data: Array<Record<string, unknown>> | null; error: { code?: string; message?: string } | null } =
+      extendedContactsRes as unknown as {
+        data: Array<Record<string, unknown>> | null;
+        error: { code?: string; message?: string } | null;
+      };
+    let needsProfileSchemaUpdate = false;
+
+    if (contactsRes.error && !isMissingTableError(contactsRes.error) && isMissingColumnError(contactsRes.error)) {
+      needsProfileSchemaUpdate = true;
+      contactsRes = (await db
+        .from("escala_contacts")
+        .select(CONTACTS_BASE_SELECT)) as unknown as {
+        data: Array<Record<string, unknown>> | null;
+        error: { code?: string; message?: string } | null;
+      };
+    }
 
     const firstErr =
       entriesRes.error ||
@@ -636,7 +797,9 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
             .select(
               "id, date, shift, group_id, volunteer_name, phone, status, message_sent"
             ),
-          db.from("escala_contacts").select("name_key, volunteer_name, phone"),
+          db
+            .from("escala_contacts")
+            .select(needsProfileSchemaUpdate ? CONTACTS_BASE_SELECT : CONTACTS_EXTENDED_SELECT),
           db
             .from("escala_contact_links")
             .select(
@@ -651,9 +814,12 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
 
       return formatCloudStateResponse({
         entriesData: freshEntriesRes.data || [],
-        contactsData: freshContactsRes.data || [],
+        contactsData:
+          (freshContactsRes.data as unknown as Array<Record<string, unknown>>) ||
+          [],
         linksData: freshLinksRes.data || [],
         templatesData: freshTemplatesRes.data || null,
+        needsProfileSchemaUpdate,
       });
     }
 
@@ -662,6 +828,7 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
       contactsData: contactsRes.data || [],
       linksData: linksRes.data || [],
       templatesData: templatesRes.data || null,
+      needsProfileSchemaUpdate,
     });
   } catch (err) {
     console.error("Erro ao carregar dados do Supabase:", err);
@@ -680,6 +847,7 @@ function formatCloudStateResponse(params: {
   contactsData: Array<Record<string, unknown>>;
   linksData: Array<Record<string, unknown>>;
   templatesData: Record<string, unknown> | null;
+  needsProfileSchemaUpdate?: boolean;
 }): HandlerResult {
   const entries = params.entriesData.map((row) => ({
     id: row.id,
@@ -694,6 +862,7 @@ function formatCloudStateResponse(params: {
 
   const contactBook: Record<string, string> = {};
   const contactNames: Record<string, string> = {};
+  const volunteerProfiles: Record<string, ReturnType<typeof sanitizeProfileFromRow>> = {};
   for (const row of params.contactsData) {
     const normKey = normalizeNameKeyServer(String(row.name_key || ""));
     if (!normKey) continue;
@@ -706,6 +875,9 @@ function formatCloudStateResponse(params: {
     const phone = typeof row.phone === "string" ? row.phone.trim() : "";
     if (phone) {
       contactBook[normKey] = phone;
+    }
+    if (!params.needsProfileSchemaUpdate) {
+      volunteerProfiles[normKey] = sanitizeProfileFromRow(row);
     }
   }
 
@@ -741,9 +913,11 @@ function formatCloudStateResponse(params: {
     status: 200,
     body: {
       configured: true,
+      needsProfileSchemaUpdate: Boolean(params.needsProfileSchemaUpdate),
       entries,
       contactBook,
       contactNames,
+      volunteerProfiles,
       contactLinks,
       templates,
     },
@@ -1114,25 +1288,72 @@ export async function handleCloudStatePost(rawBody: unknown): Promise<HandlerRes
         return { status: 400, body: { error: "Nome inválido para renomeação." } };
       }
 
-      const [{ data: oldRow }, { data: newRow }] = await Promise.all([
-        db.from("escala_contacts").select("phone").eq("name_key", oldKey).maybeSingle(),
-        db.from("escala_contacts").select("phone").eq("name_key", newKey).maybeSingle(),
-      ]);
+      let hasProfileCols = true;
+      let oldRowRes = await db
+        .from("escala_contacts")
+        .select(CONTACTS_EXTENDED_SELECT)
+        .eq("name_key", oldKey)
+        .maybeSingle();
+      if (oldRowRes.error && isMissingColumnError(oldRowRes.error)) {
+        hasProfileCols = false;
+        oldRowRes = (await db
+          .from("escala_contacts")
+          .select(CONTACTS_BASE_SELECT)
+          .eq("name_key", oldKey)
+          .maybeSingle()) as typeof oldRowRes;
+      }
+
+      const newRowRes = await db
+        .from("escala_contacts")
+        .select(hasProfileCols ? CONTACTS_EXTENDED_SELECT : CONTACTS_BASE_SELECT)
+        .eq("name_key", newKey)
+        .maybeSingle();
+
+      const oldRow = oldRowRes.data as Record<string, unknown> | null;
+      const newRow = newRowRes.data as Record<string, unknown> | null;
 
       const resolvedPhone =
         (typeof body.phone === "string" ? body.phone.trim() : "") ||
         String(newRow?.phone || "").trim() ||
         String(oldRow?.phone || "").trim();
 
-      const { error: upErr } = await db.from("escala_contacts").upsert(
-        {
-          name_key: newKey,
-          volunteer_name: cleanNewName,
-          phone: resolvedPhone,
-          updated_at: nowIso,
-        },
-        { onConflict: "name_key" }
-      );
+      const upsertPayload: Record<string, unknown> = {
+        name_key: newKey,
+        volunteer_name: cleanNewName,
+        phone: resolvedPhone,
+        updated_at: nowIso,
+      };
+      if (hasProfileCols) {
+        const sourceProfileRow = oldRow || newRow || {};
+        upsertPayload.birth_day = sourceProfileRow.birth_day ?? null;
+        upsertPayload.birth_month = sourceProfileRow.birth_month ?? null;
+        upsertPayload.roles = Array.isArray(sourceProfileRow.roles)
+          ? sourceProfileRow.roles
+          : [];
+        upsertPayload.preferred_shifts = Array.isArray(
+          sourceProfileRow.preferred_shifts
+        )
+          ? sourceProfileRow.preferred_shifts
+          : [];
+        upsertPayload.family_group_id =
+          typeof sourceProfileRow.family_group_id === "string"
+            ? sourceProfileRow.family_group_id
+            : "";
+        upsertPayload.family_group_name =
+          typeof sourceProfileRow.family_group_name === "string"
+            ? sourceProfileRow.family_group_name
+            : "";
+        upsertPayload.family_sync_mode =
+          sourceProfileRow.family_sync_mode === "same_day"
+            ? "same_day"
+            : "same_shift";
+        upsertPayload.birthday_sent_year =
+          sourceProfileRow.birthday_sent_year ?? null;
+      }
+
+      const { error: upErr } = await db
+        .from("escala_contacts")
+        .upsert(upsertPayload, { onConflict: "name_key" });
       if (upErr) return { status: 500, body: { error: upErr.message } };
 
       if (oldKey !== newKey) {
@@ -1189,6 +1410,138 @@ export async function handleCloudStatePost(rawBody: unknown): Promise<HandlerRes
             },
             { onConflict: "id" }
           );
+        }
+      }
+    } else if (action === "upsert_volunteer_profile") {
+      const nameKey = normalizeNameKeyServer(String(body.nameKey || ""));
+      const cleanName = formatVolunteerNameServer(
+        String(body.volunteerName || body.nameKey || "")
+      );
+      if (!nameKey) {
+        return { status: 400, body: { error: "Voluntário inválido." } };
+      }
+
+      const { data: existingRow } = await db
+        .from("escala_contacts")
+        .select("name_key, volunteer_name, phone")
+        .eq("name_key", nameKey)
+        .maybeSingle();
+
+      const sanitized = sanitizeIncomingProfile(
+        (body.profile || {}) as Record<string, unknown>
+      );
+      const { error: profErr } = await db.from("escala_contacts").upsert(
+        {
+          name_key: nameKey,
+          volunteer_name: String(existingRow?.volunteer_name || cleanName),
+          phone: String(existingRow?.phone || ""),
+          ...sanitized,
+          updated_at: nowIso,
+        },
+        { onConflict: "name_key" }
+      );
+      if (profErr) {
+        if (isMissingColumnError(profErr)) {
+          return {
+            status: 400,
+            body: {
+              needsProfileSchemaUpdate: true,
+              error:
+                "Execute o script supabase/migration_fase1.sql no SQL Editor do Supabase para salvar aniversário, funções, turnos e família.",
+            },
+          };
+        }
+        return { status: 500, body: { error: profErr.message } };
+      }
+    } else if (action === "update_family_group") {
+      const familyGroupId = String(body.familyGroupId || "").trim();
+      const familyGroupName = String(body.familyGroupName || "").trim();
+      const familySyncMode =
+        body.familySyncMode === "same_day" ? "same_day" : "same_shift";
+      const memberKeys = Array.isArray(body.memberKeys)
+        ? Array.from(
+            new Set(
+              body.memberKeys
+                .map((k) => normalizeNameKeyServer(String(k)))
+                .filter(Boolean)
+            )
+          )
+        : [];
+      const removedKeys = Array.isArray(body.removedKeys)
+        ? Array.from(
+            new Set(
+              body.removedKeys
+                .map((k) => normalizeNameKeyServer(String(k)))
+                .filter(Boolean)
+            )
+          )
+        : [];
+
+      if (memberKeys.length > 0 && familyGroupId) {
+        const { error: famErr } = await db
+          .from("escala_contacts")
+          .update({
+            family_group_id: familyGroupId,
+            family_group_name: familyGroupName,
+            family_sync_mode: familySyncMode,
+            updated_at: nowIso,
+          })
+          .in("name_key", memberKeys);
+        if (famErr) {
+          if (isMissingColumnError(famErr)) {
+            return {
+              status: 400,
+              body: {
+                needsProfileSchemaUpdate: true,
+                error:
+                  "Execute o script supabase/migration_fase1.sql no SQL Editor do Supabase para salvar vínculos de parentesco.",
+              },
+            };
+          }
+          return { status: 500, body: { error: famErr.message } };
+        }
+      }
+
+      if (removedKeys.length > 0) {
+        const { error: remErr } = await db
+          .from("escala_contacts")
+          .update({
+            family_group_id: "",
+            family_group_name: "",
+            family_sync_mode: "same_shift",
+            updated_at: nowIso,
+          })
+          .in("name_key", removedKeys);
+        if (remErr && !isMissingColumnError(remErr)) {
+          return { status: 500, body: { error: remErr.message } };
+        }
+      }
+    } else if (action === "mark_birthday_sent") {
+      const nameKey = normalizeNameKeyServer(String(body.nameKey || ""));
+      const year =
+        typeof body.year === "number" && Number.isInteger(body.year)
+          ? body.year
+          : null;
+      if (nameKey) {
+        const { error: bErr } = await db
+          .from("escala_contacts")
+          .update({
+            birthday_sent_year: year,
+            updated_at: nowIso,
+          })
+          .eq("name_key", nameKey);
+        if (bErr) {
+          if (isMissingColumnError(bErr)) {
+            return {
+              status: 400,
+              body: {
+                needsProfileSchemaUpdate: true,
+                error:
+                  "Execute o script supabase/migration_fase1.sql no SQL Editor do Supabase para salvar o envio de felicitação.",
+              },
+            };
+          }
+          return { status: 500, body: { error: bErr.message } };
         }
       }
     } else if (action === "delete_volunteer") {

@@ -24,13 +24,27 @@ create table public.escala_entries (
 create index idx_escala_entries_date
   on public.escala_entries (date);
 
--- 2. Tabela de catálogo de contatos (pessoa -> WhatsApp vinculado)
+-- 2. Tabela de catálogo de contatos (pessoa -> WhatsApp, aniversário, funções, turnos e família)
 create table public.escala_contacts (
   name_key text primary key,
   volunteer_name text not null default '',
   phone text not null default '',
+  birth_day integer,
+  birth_month integer,
+  roles text[] not null default '{}',
+  preferred_shifts text[] not null default '{}',
+  family_group_id text not null default '',
+  family_group_name text not null default '',
+  family_sync_mode text not null default 'same_shift',
+  birthday_sent_year integer,
   updated_at timestamptz not null default now()
 );
+
+create index idx_escala_contacts_birthday
+  on public.escala_contacts (birth_month, birth_day);
+
+create index idx_escala_contacts_family_group
+  on public.escala_contacts (family_group_id);
 
 -- 3. Tabela de vínculos entre nomes parecidos (mesma pessoa ou pessoas distintas)
 create table public.escala_contact_links (
