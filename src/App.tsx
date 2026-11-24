@@ -626,6 +626,7 @@ export default function App() {
 
         if (options?.silent) {
           if (pendingMutationsRef.current > 0) return;
+          if (document.querySelector('[role="dialog"]')) return;
           const activeTag = document.activeElement?.tagName;
           if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") {
             return;
@@ -668,6 +669,7 @@ export default function App() {
     const refreshQuietly = () => {
       if (document.visibilityState !== "visible") return;
       if (pendingMutationsRef.current > 0) return;
+      if (document.querySelector('[role="dialog"]')) return;
       const activeTag = document.activeElement?.tagName;
       if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") {
         return;
@@ -678,11 +680,11 @@ export default function App() {
     const intervalId = window.setInterval(refreshQuietly, 10000);
     const onVisible = () => {
       if (document.visibilityState === "visible") {
-        void pullStateFromCloud(false, { silent: true });
+        refreshQuietly();
       }
     };
     const onFocus = () => {
-      void pullStateFromCloud(false, { silent: true });
+      refreshQuietly();
     };
 
     document.addEventListener("visibilitychange", onVisible);

@@ -137,6 +137,16 @@ const ALLOWED_ROLE_KEYS = new Set([
   "coordenador",
 ]);
 
+const ALLOWED_AGE_KEYS = new Set([
+  "3e4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9e10",
+  "11e12",
+]);
+
 function sanitizeProfileFromRow(row: Record<string, unknown>) {
   const birthMonth =
     typeof row.birth_month === "number" &&
@@ -153,13 +163,18 @@ function sanitizeProfileFromRow(row: Record<string, unknown>) {
     row.birth_day <= 31
       ? row.birth_day
       : null;
-  const roles = Array.isArray(row.roles)
-    ? Array.from(
-        new Set(
-          row.roles.map((r) => String(r)).filter((r) => ALLOWED_ROLE_KEYS.has(r))
-        )
-      )
-    : [];
+  const rawRoles = Array.isArray(row.roles) ? row.roles.map((r) => String(r)) : [];
+  const roles = Array.from(
+    new Set(rawRoles.filter((r) => ALLOWED_ROLE_KEYS.has(r)))
+  );
+  const preferredAges = Array.from(
+    new Set(
+      rawRoles
+        .filter((r) => r.startsWith("age:"))
+        .map((r) => r.slice(4))
+        .filter((a) => ALLOWED_AGE_KEYS.has(a))
+    )
+  );
   const preferredShifts = Array.isArray(row.preferred_shifts)
     ? Array.from(
         new Set(
@@ -186,6 +201,7 @@ function sanitizeProfileFromRow(row: Record<string, unknown>) {
     birthDay,
     birthMonth,
     roles,
+    preferredAges,
     preferredShifts,
     familyGroupId,
     familyGroupName,
@@ -217,6 +233,16 @@ function sanitizeIncomingProfile(raw: Record<string, unknown> | undefined | null
         )
       )
     : [];
+  const preferredAges = Array.isArray(raw?.preferredAges)
+    ? Array.from(
+        new Set(
+          raw.preferredAges
+            .map((a) => String(a))
+            .filter((a) => ALLOWED_AGE_KEYS.has(a))
+        )
+      )
+    : [];
+  const storedRoles = [...roles, ...preferredAges.map((a) => `age:${a}`)];
   const preferredShifts = Array.isArray(raw?.preferredShifts)
     ? Array.from(
         new Set(
@@ -242,7 +268,7 @@ function sanitizeIncomingProfile(raw: Record<string, unknown> | undefined | null
   return {
     birth_day: birthDay,
     birth_month: birthMonth,
-    roles,
+    roles: storedRoles,
     preferred_shifts: preferredShifts,
     family_group_id: familyGroupId,
     family_group_name: familyGroupName,

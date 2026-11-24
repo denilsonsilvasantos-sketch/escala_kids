@@ -89,12 +89,22 @@ export type VolunteerRoleKey =
   | "pastor"
   | "coordenador";
 
+export type VolunteerAgeKey =
+  | "3e4"
+  | "5"
+  | "6"
+  | "7"
+  | "8"
+  | "9e10"
+  | "11e12";
+
 export type FamilySyncMode = "same_shift" | "same_day";
 
 export interface VolunteerProfile {
   birthDay: number | null;
   birthMonth: number | null;
   roles: VolunteerRoleKey[];
+  preferredAges: VolunteerAgeKey[];
   preferredShifts: ShiftType[];
   familyGroupId: string;
   familyGroupName: string;

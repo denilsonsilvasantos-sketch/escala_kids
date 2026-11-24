@@ -14,8 +14,10 @@ import {
   normalizeNameKey,
 } from "../utils/contacts";
 import {
+  formatAgePreferencesLabel,
   formatShiftPreferenceLabel,
   getRoleKeyForGroupId,
+  matchesAgePreference,
   ROLE_LABEL_BY_KEY,
 } from "../utils/volunteerRoles";
 
@@ -100,6 +102,8 @@ export function QuickAddModal({
       phone: string;
       matchesRole: boolean;
       matchesShift: boolean;
+      ageMatch: "match" | "mismatch" | "any";
+      preferredAgesLabel: string;
       shiftHint: string;
       familyName: string;
       score: number;
@@ -119,17 +123,23 @@ export function QuickAddModal({
       const prof = volunteerProfiles[norm];
       const matchesRole = Boolean(prof?.roles?.includes(targetRoleKey));
       const matchesShift = Boolean(prof?.preferredShifts?.includes(shift));
+      const ageMatch = matchesAgePreference(prof?.preferredAges, groupId);
+      const preferredAgesLabel = formatAgePreferencesLabel(
+        prof?.preferredAges || []
+      );
 
       if (q) {
         const normDisplay = normalizeNameKey(display);
         if (!normDisplay.includes(q) || normDisplay === q) continue;
       } else {
-        // Without search text, only show volunteers who match role or shift
-        if (!matchesRole && !matchesShift) continue;
+        // Without search text, exclude incompatible age brackets and require at least one match
+        if (ageMatch === "mismatch") continue;
+        if (!matchesRole && !matchesShift && ageMatch !== "match") continue;
       }
 
       const score =
         (matchesRole ? 10 : 0) +
+        (ageMatch === "match" ? 8 : ageMatch === "mismatch" ? -25 : 0) +
         (matchesShift ? 5 : 0) +
         (savedPhone ? 1 : 0);
 
@@ -139,6 +149,8 @@ export function QuickAddModal({
         phone: savedPhone,
         matchesRole,
         matchesShift,
+        ageMatch,
+        preferredAgesLabel,
         shiftHint: formatShiftPreferenceLabel(prof?.preferredShifts || []),
         familyName: prof?.familyGroupName || "",
         score,
@@ -151,7 +163,7 @@ export function QuickAddModal({
         return a.name.localeCompare(b.name, "pt-BR");
       })
       .slice(0, 6);
-  }, [volunteerName, contactBook, contactNames, volunteerProfiles, targetRoleKey, shift]);
+  }, [volunteerName, contactBook, contactNames, volunteerProfiles, targetRoleKey, shift, groupId]);
 
   if (!isOpen) return null;
 
@@ -327,19 +339,43 @@ export function QuickAddModal({
                                 ? formatPhoneDisplay(item.phone)
                                 : "Sem WhatsApp"}
                             </span>
-                            {(item.matchesRole || item.matchesShift) && (
+                            {item.ageMatch === "mismatch" ? (
                               <>
                                 <span className="text-zinc-300" aria-hidden="true">
                                   ·
                                 </span>
-                                <span className="text-emerald-700 font-medium">
-                                  {item.matchesRole && item.matchesShift
-                                    ? "Função e turno"
-                                    : item.matchesRole
-                                      ? "Mesma função"
-                                      : `Turno ${item.shiftHint}`}
+                                <span className="text-amber-700 font-medium">
+                                  Outra idade (prefere {item.preferredAgesLabel})
                                 </span>
                               </>
+                            ) : (
+                              (item.matchesRole ||
+                                item.matchesShift ||
+                                item.ageMatch === "match") && (
+                                <>
+                                  <span className="text-zinc-300" aria-hidden="true">
+                                    ·
+                                  </span>
+                                  <span className="text-emerald-700 font-medium">
+                                    {item.matchesRole &&
+                                    item.matchesShift &&
+                                    item.ageMatch === "match"
+                                      ? "Função, turno e idade"
+                                      : item.matchesRole && item.ageMatch === "match"
+                                        ? "Função e idade"
+                                        : item.matchesShift &&
+                                            item.ageMatch === "match"
+                                          ? "Turno e idade"
+                                          : item.matchesRole && item.matchesShift
+                                            ? "Função e turno"
+                                            : item.ageMatch === "match"
+                                              ? "Mesma idade"
+                                              : item.matchesRole
+                                                ? "Mesma função"
+                                                : `Turno ${item.shiftHint}`}
+                                  </span>
+                                </>
+                              )
                             )}
                             {item.familyName && (
                               <>

@@ -1,5 +1,6 @@
 import type {
   ShiftType,
+  VolunteerAgeKey,
   VolunteerProfile,
   VolunteerRoleKey,
 } from "../types/schedule";
@@ -63,10 +64,54 @@ export const MONTH_NAMES_PT = [
   "Dezembro",
 ] as const;
 
+export interface VolunteerAgeOption {
+  key: VolunteerAgeKey;
+  label: string;
+  shortLabel: string;
+  manhaHint?: string;
+}
+
+export const VOLUNTEER_AGE_OPTIONS: VolunteerAgeOption[] = [
+  { key: "3e4", label: "3 e 4 anos", shortLabel: "3 e 4" },
+  { key: "5", label: "5 anos", shortLabel: "5 anos", manhaHint: "Manhã: 5 e 6" },
+  { key: "6", label: "6 anos", shortLabel: "6 anos", manhaHint: "Manhã: 5 e 6" },
+  { key: "7", label: "7 anos", shortLabel: "7 anos", manhaHint: "Manhã: 7 e 8" },
+  { key: "8", label: "8 anos", shortLabel: "8 anos", manhaHint: "Manhã: 7 e 8" },
+  { key: "9e10", label: "9 e 10 anos", shortLabel: "9 e 10", manhaHint: "Manhã: 9 a 12" },
+  { key: "11e12", label: "11 e 12 anos", shortLabel: "11 e 12", manhaHint: "Manhã: 9 a 12" },
+];
+
+export const AGE_LABEL_BY_KEY: Record<VolunteerAgeKey, string> = {
+  "3e4": "3 e 4 anos",
+  "5": "5 anos",
+  "6": "6 anos",
+  "7": "7 anos",
+  "8": "8 anos",
+  "9e10": "9 e 10 anos",
+  "11e12": "11 e 12 anos",
+};
+
+export const AGE_SHORT_LABEL_BY_KEY: Record<VolunteerAgeKey, string> = {
+  "3e4": "3 e 4",
+  "5": "5",
+  "6": "6",
+  "7": "7",
+  "8": "8",
+  "9e10": "9 e 10",
+  "11e12": "11 e 12",
+};
+
+export const AGE_SENSITIVE_ROLES = new Set<VolunteerRoleKey>([
+  "louvor",
+  "professor",
+  "auxiliar",
+]);
+
 export const EMPTY_VOLUNTEER_PROFILE: VolunteerProfile = {
   birthDay: null,
   birthMonth: null,
   roles: [],
+  preferredAges: [],
   preferredShifts: [],
   familyGroupId: "",
   familyGroupName: "",
@@ -94,6 +139,41 @@ export function getRoleKeyForGroupId(groupId: string): VolunteerRoleKey {
   if (groupId.endsWith("-pastores")) return "pastor";
   if (groupId.endsWith("-coordenador")) return "coordenador";
   return "auxiliar";
+}
+
+export function getAgeKeysForGroupId(groupId: string): VolunteerAgeKey[] {
+  if (groupId.includes("louvor-3a6")) return ["3e4", "5", "6"];
+  if (groupId.endsWith("-3e4")) return ["3e4"];
+  if (groupId.endsWith("-5e6")) return ["5", "6"];
+  if (groupId.endsWith("-5")) return ["5"];
+  if (groupId.endsWith("-6")) return ["6"];
+  if (groupId.endsWith("-7e8")) return ["7", "8"];
+  if (groupId.endsWith("-7")) return ["7"];
+  if (groupId.endsWith("-8")) return ["8"];
+  if (groupId.endsWith("-9a12")) return ["9e10", "11e12"];
+  if (groupId.endsWith("-9e10")) return ["9e10"];
+  if (groupId.endsWith("-11e12")) return ["11e12"];
+  return [];
+}
+
+export function isAgeSensitiveGroupId(groupId: string): boolean {
+  return AGE_SENSITIVE_ROLES.has(getRoleKeyForGroupId(groupId));
+}
+
+export function matchesAgePreference(
+  preferredAges: VolunteerAgeKey[] | undefined,
+  groupId: string
+): "match" | "mismatch" | "any" {
+  if (!isAgeSensitiveGroupId(groupId)) return "any";
+  if (!preferredAges || preferredAges.length === 0) return "any";
+  const groupAges = getAgeKeysForGroupId(groupId);
+  if (groupAges.length === 0) return "any";
+  return groupAges.some((a) => preferredAges.includes(a)) ? "match" : "mismatch";
+}
+
+export function formatAgePreferencesLabel(ages: VolunteerAgeKey[]): string {
+  if (!ages || ages.length === 0) return "";
+  return ages.map((a) => AGE_SHORT_LABEL_BY_KEY[a] || a).join(", ") + " anos";
 }
 
 export function formatBirthdayDDMM(
@@ -136,6 +216,50 @@ export function normalizeBirthdayFields(
     return { birthDay: null, birthMonth: null };
   }
   return { birthDay: d, birthMonth: m };
+}
+
+export function formatBirthdayInputMask(nextRaw: string, prevValue = ""): string {
+  // Support typing "5/" -> "05/"
+  const explicitSlash = nextRaw.match(/^(\d{1,2})\/$/);
+  if (explicitSlash && nextRaw.length > prevValue.length) {
+    const paddedDay = explicitSlash[1].padStart(2, "0");
+    return `${paddedDay}/`;
+  }
+  const digits = nextRaw.replace(/\D/g, "").slice(0, 4);
+  if (digits.length === 0) return "";
+  if (digits.length <= 2) {
+    if (nextRaw.endsWith("/") && digits.length === 2 && nextRaw.length >= prevValue.length) {
+      return `${digits}/`;
+    }
+    return digits;
+  }
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}`;
+}
+
+export function parseBirthdayInputBR(input: string): {
+  empty: boolean;
+  valid: boolean;
+  birthDay: number | null;
+  birthMonth: number | null;
+} {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { empty: true, valid: true, birthDay: null, birthMonth: null };
+  }
+  const match = trimmed.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (!match) {
+    return { empty: false, valid: false, birthDay: null, birthMonth: null };
+  }
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    return { empty: false, valid: false, birthDay: null, birthMonth: null };
+  }
+  const maxDay = getMaxDaysInMonth(month);
+  if (!Number.isInteger(day) || day < 1 || day > maxDay) {
+    return { empty: false, valid: false, birthDay: null, birthMonth: null };
+  }
+  return { empty: false, valid: true, birthDay: day, birthMonth: month };
 }
 
 export function getBirthdayStatus(
@@ -231,11 +355,36 @@ export function normalizeVolunteerProfile(
 ): VolunteerProfile {
   if (!raw) return { ...EMPTY_VOLUNTEER_PROFILE };
   const validRoleSet = new Set<string>(VOLUNTEER_ROLE_OPTIONS.map((r) => r.key));
-  const roles = Array.isArray(raw.roles)
-    ? (Array.from(
-        new Set(raw.roles.filter((r): r is VolunteerRoleKey => validRoleSet.has(String(r))))
-      ) as VolunteerRoleKey[])
-    : [];
+  const validAgeSet = new Set<string>(VOLUNTEER_AGE_OPTIONS.map((a) => a.key));
+
+  const rolesList: VolunteerRoleKey[] = [];
+  const agesList: VolunteerAgeKey[] = [];
+
+  if (Array.isArray(raw.roles)) {
+    for (const item of raw.roles) {
+      const str = String(item);
+      if (str.startsWith("age:")) {
+        const ageKey = str.slice(4);
+        if (validAgeSet.has(ageKey)) {
+          agesList.push(ageKey as VolunteerAgeKey);
+        }
+      } else if (validRoleSet.has(str)) {
+        rolesList.push(str as VolunteerRoleKey);
+      }
+    }
+  }
+
+  if (Array.isArray(raw.preferredAges)) {
+    for (const item of raw.preferredAges) {
+      const str = String(item);
+      if (validAgeSet.has(str)) {
+        agesList.push(str as VolunteerAgeKey);
+      }
+    }
+  }
+
+  const roles = Array.from(new Set(rolesList));
+  const preferredAges = Array.from(new Set(agesList));
   const preferredShifts = Array.isArray(raw.preferredShifts)
     ? (Array.from(
         new Set(
@@ -260,6 +409,7 @@ export function normalizeVolunteerProfile(
     birthDay: birthday.birthDay,
     birthMonth: birthday.birthMonth,
     roles,
+    preferredAges,
     preferredShifts,
     familyGroupId: typeof raw.familyGroupId === "string" ? raw.familyGroupId.trim() : "",
     familyGroupName:

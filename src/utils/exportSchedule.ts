@@ -11,6 +11,7 @@ import type {
 import { formatDateDDMM, formatPhoneDisplay } from "./dateAndMessage";
 import { formatVolunteerName, normalizeNameKey } from "./contacts";
 import {
+  formatAgePreferencesLabel,
   formatBirthdayDDMM,
   formatShiftPreferenceLabel,
   ROLE_LABEL_BY_KEY,
@@ -255,6 +256,9 @@ export function exportVolunteersToExcel(
       Funções: prof
         ? prof.roles.map((r) => ROLE_LABEL_BY_KEY[r] || r).join(", ")
         : "",
+      "Faixas Etárias": prof
+        ? formatAgePreferencesLabel(prof.preferredAges)
+        : "",
       Família: prof?.familyGroupName || "",
     };
   });
@@ -266,6 +270,7 @@ export function exportVolunteersToExcel(
     { wch: 13 },
     { wch: 16 },
     { wch: 34 },
+    { wch: 24 },
     { wch: 22 },
   ];
 
@@ -315,7 +320,10 @@ export function exportVolunteersToPdf(
       const rolesLabel = prof
         ? prof.roles.map((r) => ROLE_LABEL_BY_KEY[r] || r).join(", ")
         : "";
-      const summary = [shiftsLabel, rolesLabel, prof?.familyGroupName]
+      const agesLabel = prof
+        ? formatAgePreferencesLabel(prof.preferredAges)
+        : "";
+      const summary = [shiftsLabel, rolesLabel, agesLabel, prof?.familyGroupName]
         .filter(Boolean)
         .join(" · ");
       return [

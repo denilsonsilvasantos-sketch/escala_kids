@@ -47,7 +47,9 @@ import {
   formatPhoneDisplay,
 } from "../utils/dateAndMessage";
 import {
+  AGE_LABEL_BY_KEY,
   EMPTY_VOLUNTEER_PROFILE,
+  formatAgePreferencesLabel,
   formatBirthdayDDMM,
   formatShiftPreferenceLabel,
   getBirthdayStatus,
@@ -232,6 +234,7 @@ export function VolunteersView({
         !prof ||
         (!prof.birthDay &&
           prof.roles.length === 0 &&
+          prof.preferredAges.length === 0 &&
           prof.preferredShifts.length === 0)
       );
     }).length;
@@ -251,6 +254,7 @@ export function VolunteersView({
         filterTab === "sem-perfil" &&
         ((prof.birthDay && prof.birthMonth) ||
           prof.roles.length > 0 ||
+          prof.preferredAges.length > 0 ||
           prof.preferredShifts.length > 0)
       ) {
         return false;
@@ -259,11 +263,15 @@ export function VolunteersView({
       const roleLabels = prof.roles
         .map((r) => ROLE_LABEL_BY_KEY[r] || r)
         .join(" ");
+      const ageLabels = prof.preferredAges
+        .map((a) => AGE_LABEL_BY_KEY[a] || a)
+        .join(" ");
       return (
         normalizeNameKey(person.displayName).includes(q) ||
         person.aliases.some((a) => normalizeNameKey(a).includes(q)) ||
         person.phone.includes(search.trim()) ||
         normalizeNameKey(roleLabels).includes(q) ||
+        normalizeNameKey(ageLabels).includes(q) ||
         normalizeNameKey(prof.familyGroupName || "").includes(q)
       );
     });
@@ -1076,9 +1084,13 @@ export function VolunteersView({
                   const rolesText = profile.roles
                     .map((r) => ROLE_LABEL_BY_KEY[r] || r)
                     .join(", ");
+                  const agesText = formatAgePreferencesLabel(
+                    profile.preferredAges
+                  );
                   const hasConfiguredProfile = Boolean(
                     bdayStr ||
                       profile.roles.length > 0 ||
+                      profile.preferredAges.length > 0 ||
                       profile.preferredShifts.length > 0 ||
                       profile.familyGroupId
                   );
@@ -1213,8 +1225,19 @@ export function VolunteersView({
                                 <span className="text-zinc-300" aria-hidden="true">
                                   ·
                                 </span>
-                                <span className="text-zinc-700 truncate max-w-[260px]">
+                                <span className="text-zinc-700 truncate max-w-[240px]">
                                   {rolesText}
+                                </span>
+                              </>
+                            )}
+
+                            {agesText && (
+                              <>
+                                <span className="text-zinc-300" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="text-zinc-700 truncate max-w-[200px]">
+                                  {agesText}
                                 </span>
                               </>
                             )}

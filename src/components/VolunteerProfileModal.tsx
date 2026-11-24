@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   X,
   Cake,
@@ -8,18 +8,22 @@ import {
   Check,
   Search,
   Trash2,
+  Baby,
 } from "lucide-react";
 import type {
   FamilySyncMode,
   ShiftType,
+  VolunteerAgeKey,
   VolunteerProfile,
   VolunteerRoleKey,
 } from "../types/schedule";
 import {
   EMPTY_VOLUNTEER_PROFILE,
-  getMaxDaysInMonth,
+  formatBirthdayDDMM,
+  formatBirthdayInputMask,
   MONTH_NAMES_PT,
-  normalizeBirthdayFields,
+  parseBirthdayInputBR,
+  VOLUNTEER_AGE_OPTIONS,
   VOLUNTEER_ROLE_OPTIONS,
 } from "../utils/volunteerRoles";
 import { normalizeNameKey } from "../utils/contacts";
@@ -68,9 +72,10 @@ export function VolunteerProfileModal({
   onClose,
   onSave,
 }: VolunteerProfileModalProps) {
-  const [birthMonth, setBirthMonth] = useState<number | "">("");
-  const [birthDay, setBirthDay] = useState<number | "">("");
+  const [birthDateInput, setBirthDateInput] = useState("");
+  const [birthError, setBirthError] = useState<string | null>(null);
   const [roles, setRoles] = useState<VolunteerRoleKey[]>([]);
+  const [preferredAges, setPreferredAges] = useState<VolunteerAgeKey[]>([]);
   const [preferredShifts, setPreferredShifts] = useState<ShiftType[]>([]);
   const [familySelection, setFamilySelection] = useState<string>("none"); // "none" | "new" | existing familyGroupId
   const [familyGroupName, setFamilyGroupName] = useState("");
@@ -80,6 +85,9 @@ export function VolunteerProfileModal({
     []
   );
   const [relativeSearch, setRelativeSearch] = useState("");
+
+  // Track which volunteerKey the open modal was initialized for so background cloud syncs NEVER wipe user edits
+  const initializedForKeyRef = useRef<string | null>(null);
 
   const existingFamilies = useMemo<ExistingFamilyOption[]>(() => {
     const map = new Map<string, ExistingFamilyOption>();
@@ -107,10 +115,21 @@ export function VolunteerProfileModal({
   }, [allPeople, volunteerProfiles]);
 
   useEffect(() => {
-    if (!isOpen || !volunteerKey) return;
-    setBirthMonth(currentProfile.birthMonth ?? "");
-    setBirthDay(currentProfile.birthDay ?? "");
+    if (!isOpen || !volunteerKey) {
+      initializedForKeyRef.current = null;
+      return;
+    }
+    if (initializedForKeyRef.current === volunteerKey) {
+      return;
+    }
+    initializedForKeyRef.current = volunteerKey;
+
+    setBirthDateInput(
+      formatBirthdayDDMM(currentProfile.birthDay, currentProfile.birthMonth)
+    );
+    setBirthError(null);
     setRoles(currentProfile.roles || []);
+    setPreferredAges(currentProfile.preferredAges || []);
     setPreferredShifts(currentProfile.preferredShifts || []);
     setRelativeSearch("");
 
@@ -141,12 +160,10 @@ export function VolunteerProfileModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isOpen, onClose]);
 
-  const maxDayForMonth = useMemo(() => {
-    if (typeof birthMonth === "number") {
-      return getMaxDaysInMonth(birthMonth);
-    }
-    return 31;
-  }, [birthMonth]);
+  const parsedBirthdayPreview = useMemo(
+    () => parseBirthdayInputBR(birthDateInput),
+    [birthDateInput]
+  );
 
   const filteredOtherPeople = useMemo(() => {
     if (!volunteerKey) return [];
@@ -176,6 +193,14 @@ export function VolunteerProfileModal({
       prev.includes(roleKey)
         ? prev.filter((r) => r !== roleKey)
         : [...prev, roleKey]
+    );
+  };
+
+  const toggleAge = (ageKey: VolunteerAgeKey) => {
+    setPreferredAges((prev) =>
+      prev.includes(ageKey)
+        ? prev.filter((a) => a !== ageKey)
+        : [...prev, ageKey]
     );
   };
 
@@ -219,26 +244,29 @@ export function VolunteerProfileModal({
     }
   };
 
-  const handleMonthChange = (val: string) => {
-    if (!val) {
-      setBirthMonth("");
-      setBirthDay("");
-      return;
-    }
-    const nextMonth = Number(val);
-    setBirthMonth(nextMonth);
-    if (typeof birthDay === "number") {
-      const maxD = getMaxDaysInMonth(nextMonth);
-      if (birthDay > maxD) setBirthDay(maxD);
+  const handleBirthdayInputChange = (raw: string) => {
+    const masked = formatBirthdayInputMask(raw, birthDateInput);
+    setBirthDateInput(masked);
+    if (birthError) setBirthError(null);
+  };
+
+  const handleBirthdayBlur = () => {
+    const parsed = parseBirthdayInputBR(birthDateInput);
+    if (!parsed.empty && parsed.valid && parsed.birthDay && parsed.birthMonth) {
+      setBirthDateInput(
+        formatBirthdayDDMM(parsed.birthDay, parsed.birthMonth)
+      );
+      setBirthError(null);
     }
   };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    const normalizedBirthday = normalizeBirthdayFields(
-      typeof birthDay === "number" ? birthDay : null,
-      typeof birthMonth === "number" ? birthMonth : null
-    );
+    const parsedBirthday = parseBirthdayInputBR(birthDateInput);
+    if (!parsedBirthday.valid) {
+      setBirthError("Digite uma data válida no formato DD/MM (ex: 24/11).");
+      return;
+    }
 
     const hasFamily = familySelection !== "none";
     const resolvedFamilyId = !hasFamily
@@ -252,9 +280,10 @@ export function VolunteerProfileModal({
 
     const nextProfile: VolunteerProfile = {
       ...EMPTY_VOLUNTEER_PROFILE,
-      birthDay: normalizedBirthday.birthDay,
-      birthMonth: normalizedBirthday.birthMonth,
+      birthDay: parsedBirthday.birthDay,
+      birthMonth: parsedBirthday.birthMonth,
       roles,
+      preferredAges,
       preferredShifts,
       familyGroupId: resolvedFamilyId,
       familyGroupName: resolvedFamilyName,
@@ -282,7 +311,6 @@ export function VolunteerProfileModal({
         removedKeys,
       };
     } else if (!hasFamily && currentProfile.familyGroupId) {
-      // Volunteer is leaving their previous family group
       familyUpdate = {
         familyGroupId: currentProfile.familyGroupId,
         familyGroupName: currentProfile.familyGroupName,
@@ -325,7 +353,7 @@ export function VolunteerProfileModal({
               {volunteerPhone
                 ? formatPhoneDisplay(volunteerPhone)
                 : "Sem WhatsApp cadastrado"}{" "}
-              · Aniversário, funções, turnos e parentesco
+              · Aniversário, funções, idades, turnos e parentesco
             </p>
           </div>
           <button
@@ -340,7 +368,7 @@ export function VolunteerProfileModal({
 
         <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col">
           <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-5 sm:p-6 space-y-6">
-            {/* 1. Aniversário */}
+            {/* 1. Aniversário (estilo BR DD/MM) */}
             <section className="space-y-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -349,12 +377,12 @@ export function VolunteerProfileModal({
                     Aniversário (dia e mês)
                   </h3>
                 </div>
-                {(birthDay !== "" || birthMonth !== "") && (
+                {birthDateInput.trim() !== "" && (
                   <button
                     type="button"
                     onClick={() => {
-                      setBirthDay("");
-                      setBirthMonth("");
+                      setBirthDateInput("");
+                      setBirthError(null);
                     }}
                     className="text-xs font-medium text-zinc-500 hover:text-red-600 cursor-pointer"
                   >
@@ -363,60 +391,43 @@ export function VolunteerProfileModal({
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label
-                    htmlFor="profile-birth-day"
-                    className="block text-xs font-medium text-zinc-600 mb-1"
-                  >
-                    Dia
-                  </label>
-                  <select
-                    id="profile-birth-day"
-                    value={birthDay}
-                    onChange={(e) =>
-                      setBirthDay(e.target.value ? Number(e.target.value) : "")
-                    }
-                    className="w-full px-3 py-2 text-sm font-mono-tabular border border-[#E8E6DF] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                  >
-                    <option value="">Selecionar dia</option>
-                    {Array.from({ length: maxDayForMonth }, (_, idx) => idx + 1).map(
-                      (day) => (
-                        <option key={day} value={day}>
-                          {String(day).padStart(2, "0")}
-                        </option>
-                      )
-                    )}
-                  </select>
-                </div>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+                <input
+                  id="profile-birth-br"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={5}
+                  value={birthDateInput}
+                  onChange={(e) => handleBirthdayInputChange(e.target.value)}
+                  onBlur={handleBirthdayBlur}
+                  placeholder="Ex: 24/11"
+                  className={`w-full sm:w-44 px-3.5 py-2 text-sm font-mono-tabular border rounded-lg bg-white focus:outline-none focus:ring-2 ${
+                    birthError
+                      ? "border-red-400 focus:ring-red-500"
+                      : "border-[#E8E6DF] focus:ring-emerald-700"
+                  }`}
+                />
 
-                <div>
-                  <label
-                    htmlFor="profile-birth-month"
-                    className="block text-xs font-medium text-zinc-600 mb-1"
-                  >
-                    Mês
-                  </label>
-                  <select
-                    id="profile-birth-month"
-                    value={birthMonth}
-                    onChange={(e) => handleMonthChange(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-[#E8E6DF] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                  >
-                    <option value="">Selecionar mês</option>
-                    {MONTH_NAMES_PT.map((monthName, idx) => (
-                      <option key={monthName} value={idx + 1}>
-                        {String(idx + 1).padStart(2, "0")} · {monthName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {!birthError &&
+                  !parsedBirthdayPreview.empty &&
+                  parsedBirthdayPreview.valid &&
+                  parsedBirthdayPreview.birthDay &&
+                  parsedBirthdayPreview.birthMonth && (
+                    <span className="text-xs font-medium text-emerald-700">
+                      {String(parsedBirthdayPreview.birthDay).padStart(2, "0")} de{" "}
+                      {MONTH_NAMES_PT[parsedBirthdayPreview.birthMonth - 1]}
+                    </span>
+                  )}
+
+                {!birthError && birthDateInput.trim() === "" && (
+                  <span className="text-xs text-zinc-500">
+                    Digite no padrão brasileiro DD/MM (não precisa do ano).
+                  </span>
+                )}
               </div>
-              {((birthDay !== "" && birthMonth === "") ||
-                (birthDay === "" && birthMonth !== "")) && (
-                <p className="text-[11px] text-amber-700">
-                  Selecione tanto o dia quanto o mês para salvar o aniversário.
-                </p>
+
+              {birthError && (
+                <p className="text-xs font-medium text-red-600">{birthError}</p>
               )}
             </section>
 
@@ -533,7 +544,76 @@ export function VolunteerProfileModal({
 
             <hr className="border-[#EFECE4]" />
 
-            {/* 4. Parentesco / Família */}
+            {/* 4. Faixas Etárias Preferidas */}
+            <section className="space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Baby className="w-4 h-4 text-emerald-700" />
+                  <h3 className="text-sm font-semibold text-zinc-900">
+                    Faixas etárias que aceita servir ({preferredAges.length})
+                  </h3>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPreferredAges(VOLUNTEER_AGE_OPTIONS.map((a) => a.key))
+                    }
+                    className="text-xs font-medium text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                  >
+                    Todas
+                  </button>
+                  {preferredAges.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPreferredAges([])}
+                      className="text-xs font-medium text-zinc-500 hover:text-red-600 cursor-pointer"
+                    >
+                      Limpar
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-zinc-500 leading-relaxed">
+                Para Professor(a), Auxiliar e Louvor: marque somente as turmas/idades em que este voluntário gosta de atuar (ex.: apenas <strong>11 e 12 anos</strong>). Se deixar tudo desmarcado, ele poderá ser sugerido para qualquer idade.
+              </p>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {VOLUNTEER_AGE_OPTIONS.map((ageOpt) => {
+                  const active = preferredAges.includes(ageOpt.key);
+                  return (
+                    <button
+                      key={ageOpt.key}
+                      type="button"
+                      onClick={() => toggleAge(ageOpt.key)}
+                      className={`px-3 py-2 rounded-lg border text-left transition-colors cursor-pointer flex items-center justify-between gap-1.5 ${
+                        active
+                          ? "bg-emerald-50 border-emerald-600 text-emerald-950"
+                          : "bg-white border-[#E8E6DF] text-zinc-700 hover:bg-[#FAF9F5]"
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold truncate">
+                          {ageOpt.label}
+                        </div>
+                        {ageOpt.manhaHint && (
+                          <div className="text-[10.5px] text-zinc-500 truncate">
+                            {ageOpt.manhaHint}
+                          </div>
+                        )}
+                      </div>
+                      {active && (
+                        <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            <hr className="border-[#EFECE4]" />
+
+            {/* 5. Parentesco / Família */}
             <section className="space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
