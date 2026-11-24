@@ -17,6 +17,7 @@ import {
   formatAgePreferencesLabel,
   formatShiftPreferenceLabel,
   getRoleKeyForGroupId,
+  hasAgeSensitiveRole,
   matchesAgePreference,
   ROLE_LABEL_BY_KEY,
 } from "../utils/volunteerRoles";
@@ -123,10 +124,10 @@ export function QuickAddModal({
       const prof = volunteerProfiles[norm];
       const matchesRole = Boolean(prof?.roles?.includes(targetRoleKey));
       const matchesShift = Boolean(prof?.preferredShifts?.includes(shift));
-      const ageMatch = matchesAgePreference(prof?.preferredAges, groupId);
-      const preferredAgesLabel = formatAgePreferencesLabel(
-        prof?.preferredAges || []
-      );
+      const scopedAges =
+        prof && hasAgeSensitiveRole(prof.roles) ? prof.preferredAges : [];
+      const ageMatch = matchesAgePreference(scopedAges, groupId);
+      const preferredAgesLabel = formatAgePreferencesLabel(scopedAges);
 
       if (q) {
         const normDisplay = normalizeNameKey(display);

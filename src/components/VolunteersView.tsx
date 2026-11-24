@@ -53,6 +53,7 @@ import {
   formatBirthdayDDMM,
   formatShiftPreferenceLabel,
   getBirthdayStatus,
+  hasAgeSensitiveRole,
   MONTH_NAMES_PT,
   renderBirthdayMessage,
   ROLE_LABEL_BY_KEY,
@@ -263,9 +264,9 @@ export function VolunteersView({
       const roleLabels = prof.roles
         .map((r) => ROLE_LABEL_BY_KEY[r] || r)
         .join(" ");
-      const ageLabels = prof.preferredAges
-        .map((a) => AGE_LABEL_BY_KEY[a] || a)
-        .join(" ");
+      const ageLabels = hasAgeSensitiveRole(prof.roles)
+        ? prof.preferredAges.map((a) => AGE_LABEL_BY_KEY[a] || a).join(" ")
+        : "";
       return (
         normalizeNameKey(person.displayName).includes(q) ||
         person.aliases.some((a) => normalizeNameKey(a).includes(q)) ||
@@ -1084,9 +1085,9 @@ export function VolunteersView({
                   const rolesText = profile.roles
                     .map((r) => ROLE_LABEL_BY_KEY[r] || r)
                     .join(", ");
-                  const agesText = formatAgePreferencesLabel(
-                    profile.preferredAges
-                  );
+                  const agesText = hasAgeSensitiveRole(profile.roles)
+                    ? formatAgePreferencesLabel(profile.preferredAges)
+                    : "";
                   const hasConfiguredProfile = Boolean(
                     bdayStr ||
                       profile.roles.length > 0 ||

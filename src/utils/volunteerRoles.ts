@@ -132,10 +132,14 @@ const LEGACY_AGE_KEY_EXPANSION: Record<string, VolunteerAgeKey[]> = {
 };
 
 export const AGE_SENSITIVE_ROLES = new Set<VolunteerRoleKey>([
-  "louvor",
   "professor",
   "auxiliar",
 ]);
+
+export function hasAgeSensitiveRole(roles: VolunteerRoleKey[] | undefined): boolean {
+  if (!roles || roles.length === 0) return false;
+  return roles.some((r) => AGE_SENSITIVE_ROLES.has(r));
+}
 
 export const EMPTY_VOLUNTEER_PROFILE: VolunteerProfile = {
   birthDay: null,
@@ -172,7 +176,6 @@ export function getRoleKeyForGroupId(groupId: string): VolunteerRoleKey {
 }
 
 export function getAgeKeysForGroupId(groupId: string): VolunteerAgeKey[] {
-  if (groupId === "noite-louvor-3a6") return ["noite:3e4", "noite:5", "noite:6"];
   if (groupId.startsWith("manha-")) {
     if (groupId.endsWith("-3e4")) return ["manha:3e4"];
     if (groupId.endsWith("-5e6")) return ["manha:5e6"];

@@ -21,6 +21,7 @@ import {
   EMPTY_VOLUNTEER_PROFILE,
   formatBirthdayDDMM,
   formatBirthdayInputMask,
+  hasAgeSensitiveRole,
   MONTH_NAMES_PT,
   parseBirthdayInputBR,
   VOLUNTEER_AGE_OPTIONS,
@@ -280,12 +281,14 @@ export function VolunteerProfileModal({
       ? familyGroupName.trim() || `Família de ${volunteerName.split(" ")[0]}`
       : "";
 
+    const canChooseClassAges = hasAgeSensitiveRole(roles);
+
     const nextProfile: VolunteerProfile = {
       ...EMPTY_VOLUNTEER_PROFILE,
       birthDay: parsedBirthday.birthDay,
       birthMonth: parsedBirthday.birthMonth,
       roles,
-      preferredAges,
+      preferredAges: canChooseClassAges ? preferredAges : [],
       preferredShifts,
       familyGroupId: resolvedFamilyId,
       familyGroupName: resolvedFamilyName,
@@ -517,7 +520,9 @@ export function VolunteerProfileModal({
                 )}
               </div>
               <p className="text-xs text-zinc-500">
-                Selecione uma ou mais funções em que o voluntário atua.
+                Selecione uma ou mais funções em que o voluntário atua. Ao marcar{" "}
+                <strong className="font-medium text-zinc-700">Professor(a)</strong> ou{" "}
+                <strong className="font-medium text-zinc-700">Auxiliar</strong>, você poderá escolher as turmas (Manhã e Noite).
               </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -544,41 +549,48 @@ export function VolunteerProfileModal({
               </div>
             </section>
 
-            <hr className="border-[#EFECE4]" />
+            {/* 4. Turmas / Faixas Etárias (somente Professor(a) e Auxiliar) */}
+            {hasAgeSensitiveRole(roles) && (
+              <>
+                <hr className="border-[#EFECE4]" />
 
-            {/* 4. Faixas Etárias Preferidas (Manhã e Noite separados) */}
-            <section className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Baby className="w-4 h-4 text-emerald-700" />
-                  <h3 className="text-sm font-semibold text-zinc-900">
-                    Faixas etárias que aceita servir ({preferredAges.length})
-                  </h3>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPreferredAges(VOLUNTEER_AGE_OPTIONS.map((a) => a.key))
-                    }
-                    className="text-xs font-medium text-emerald-700 hover:text-emerald-900 cursor-pointer"
-                  >
-                    Marcar todas
-                  </button>
-                  {preferredAges.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setPreferredAges([])}
-                      className="text-xs font-medium text-zinc-500 hover:text-red-600 cursor-pointer"
-                    >
-                      Limpar tudo
-                    </button>
-                  )}
-                </div>
-              </div>
-              <p className="text-xs text-zinc-500 leading-relaxed">
-                Para Professor(a), Auxiliar e Louvor: selecione separadamente as turmas da <strong>Manhã</strong> e da <strong>Noite</strong> (ex.: na Noite apenas <strong>11 e 12 anos</strong>). Se deixar tudo desmarcado, poderá atuar em qualquer idade.
-              </p>
+                <section className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Baby className="w-4 h-4 text-emerald-700" />
+                      <h3 className="text-sm font-semibold text-zinc-900">
+                        Turmas / Faixas etárias ({preferredAges.length})
+                      </h3>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreferredAges(
+                            VOLUNTEER_AGE_OPTIONS.map((a) => a.key)
+                          )
+                        }
+                        className="text-xs font-medium text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                      >
+                        Marcar todas
+                      </button>
+                      {preferredAges.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setPreferredAges([])}
+                          className="text-xs font-medium text-zinc-500 hover:text-red-600 cursor-pointer"
+                        >
+                          Limpar tudo
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    Exclusivo para <strong>Professor(a)</strong> e{" "}
+                    <strong>Auxiliar</strong>: selecione separadamente as turmas da{" "}
+                    <strong>Manhã</strong> e da <strong>Noite</strong> (ex.: na Noite apenas{" "}
+                    <strong>11 e 12 anos</strong>). Se deixar tudo desmarcado, poderá atuar em qualquer turma.
+                  </p>
 
               <div className="space-y-3">
                 {/* Bloco Manhã */}
@@ -724,6 +736,8 @@ export function VolunteerProfileModal({
                 })()}
               </div>
             </section>
+              </>
+            )}
 
             <hr className="border-[#EFECE4]" />
 

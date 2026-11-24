@@ -14,6 +14,7 @@ import {
   formatAgePreferencesLabel,
   formatBirthdayDDMM,
   formatShiftPreferenceLabel,
+  hasAgeSensitiveRole,
   ROLE_LABEL_BY_KEY,
 } from "./volunteerRoles";
 
@@ -256,9 +257,10 @@ export function exportVolunteersToExcel(
       Funções: prof
         ? prof.roles.map((r) => ROLE_LABEL_BY_KEY[r] || r).join(", ")
         : "",
-      "Faixas Etárias": prof
-        ? formatAgePreferencesLabel(prof.preferredAges)
-        : "",
+      "Faixas Etárias":
+        prof && hasAgeSensitiveRole(prof.roles)
+          ? formatAgePreferencesLabel(prof.preferredAges)
+          : "",
       Família: prof?.familyGroupName || "",
     };
   });
@@ -320,9 +322,10 @@ export function exportVolunteersToPdf(
       const rolesLabel = prof
         ? prof.roles.map((r) => ROLE_LABEL_BY_KEY[r] || r).join(", ")
         : "";
-      const agesLabel = prof
-        ? formatAgePreferencesLabel(prof.preferredAges)
-        : "";
+      const agesLabel =
+        prof && hasAgeSensitiveRole(prof.roles)
+          ? formatAgePreferencesLabel(prof.preferredAges)
+          : "";
       const summary = [shiftsLabel, rolesLabel, agesLabel, prof?.familyGroupName]
         .filter(Boolean)
         .join(" · ");

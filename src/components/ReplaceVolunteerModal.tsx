@@ -16,6 +16,7 @@ import {
   formatAgePreferencesLabel,
   formatShiftPreferenceLabel,
   getRoleKeyForGroupId,
+  hasAgeSensitiveRole,
   matchesAgePreference,
   ROLE_LABEL_BY_KEY,
 } from "../utils/volunteerRoles";
@@ -101,10 +102,10 @@ export function ReplaceVolunteerModal({
       const prof = volunteerProfiles[normKey];
       const matchesRole = Boolean(prof?.roles?.includes(targetRoleKey));
       const matchesShift = Boolean(prof?.preferredShifts?.includes(entry.shift));
-      const ageMatch = matchesAgePreference(prof?.preferredAges, entry.groupId);
-      const preferredAgesLabel = formatAgePreferencesLabel(
-        prof?.preferredAges || []
-      );
+      const scopedAges =
+        prof && hasAgeSensitiveRole(prof.roles) ? prof.preferredAges : [];
+      const ageMatch = matchesAgePreference(scopedAges, entry.groupId);
+      const preferredAgesLabel = formatAgePreferencesLabel(scopedAges);
       if (!queryKey && ageMatch === "mismatch") continue;
 
       const savedPhone =
