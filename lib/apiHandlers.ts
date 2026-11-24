@@ -4,6 +4,10 @@ import {
   OFFICIAL_CATALOG_VERSION,
   OFFICIAL_VOLUNTEERS,
 } from "../src/data/officialVolunteers.ts";
+import {
+  OFFICIAL_BIRTHDAYS_SEED_VERSION,
+  OFFICIAL_VOLUNTEER_BIRTHDAYS,
+} from "../src/data/officialBirthdays.ts";
 
 export const GROUP_IDS_MANHA = [
   "manha-prof-3e4",
@@ -752,6 +756,81 @@ async function syncOfficialVolunteersCatalog(
   return true;
 }
 
+async function syncOfficialBirthdaysSeed(
+  db: SupabaseClient,
+  existingTemplateRow: {
+    default_noite?: string;
+    default_manha?: string;
+    group_overrides?: Record<string, string>;
+  } | null
+): Promise<boolean> {
+  const { data: contacts, error: selectErr } = await db
+    .from("escala_contacts")
+    .select("name_key, birth_day, birth_month");
+  if (selectErr) {
+    if (isMissingColumnError(selectErr)) return false;
+    throw selectErr;
+  }
+
+  const nowIso = new Date().toISOString();
+  const updates: Array<{ name_key: string; birth_day: number; birth_month: number }> = [];
+
+  for (const row of contacts || []) {
+    const rawKey = String(row.name_key || "");
+    const normKey = normalizeNameKeyServer(rawKey);
+    if (!normKey) continue;
+    if (row.birth_day != null && row.birth_month != null) continue;
+    const matched = OFFICIAL_VOLUNTEER_BIRTHDAYS[normKey];
+    if (!matched) continue;
+    updates.push({
+      name_key: rawKey,
+      birth_day: matched.birthDay,
+      birth_month: matched.birthMonth,
+    });
+  }
+
+  for (let i = 0; i < updates.length; i += 20) {
+    const chunk = updates.slice(i, i + 20);
+    await Promise.all(
+      chunk.map((u) =>
+        db
+          .from("escala_contacts")
+          .update({
+            birth_day: u.birth_day,
+            birth_month: u.birth_month,
+            updated_at: nowIso,
+          })
+          .eq("name_key", u.name_key)
+      )
+    );
+  }
+
+  const prevOverrides =
+    existingTemplateRow?.group_overrides &&
+    typeof existingTemplateRow.group_overrides === "object"
+      ? existingTemplateRow.group_overrides
+      : {};
+
+  const { error: tplErr } = await db.from("escala_templates").upsert(
+    {
+      id: "default",
+      default_noite: existingTemplateRow?.default_noite || DEFAULT_TEMPLATE_FALLBACK,
+      default_manha: existingTemplateRow?.default_manha || DEFAULT_TEMPLATE_FALLBACK,
+      group_overrides: {
+        ...prevOverrides,
+        __catalog_version: prevOverrides.__catalog_version || OFFICIAL_CATALOG_VERSION,
+        __birthdays_seed_version: OFFICIAL_BIRTHDAYS_SEED_VERSION,
+      },
+      updated_at: nowIso,
+    },
+    { onConflict: "id" }
+  );
+  if (tplErr) {
+    throw tplErr;
+  }
+  return true;
+}
+
 export async function handleCloudStateGet(): Promise<HandlerResult> {
   try {
     const cfg = getSupabaseConfig();
@@ -824,13 +903,18 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
     }
 
     // One-time atomic cleanup/seed of the official 145 volunteers in Supabase
+    let currentEntries = entriesRes.data || [];
+    let currentContacts = contactsRes.data || [];
+    let currentLinks = linksRes.data || [];
+    let currentTemplates = templatesRes.data || null;
+
     const overridesObj =
-      templatesRes.data?.group_overrides &&
-      typeof templatesRes.data.group_overrides === "object"
-        ? (templatesRes.data.group_overrides as Record<string, string>)
+      currentTemplates?.group_overrides &&
+      typeof currentTemplates.group_overrides === "object"
+        ? (currentTemplates.group_overrides as Record<string, string>)
         : {};
     if (overridesObj.__catalog_version !== OFFICIAL_CATALOG_VERSION) {
-      await syncOfficialVolunteersCatalog(db, templatesRes.data || null);
+      await syncOfficialVolunteersCatalog(db, currentTemplates);
       const [freshEntriesRes, freshContactsRes, freshLinksRes, freshTemplatesRes] =
         await Promise.all([
           db
@@ -853,22 +937,43 @@ export async function handleCloudStateGet(): Promise<HandlerResult> {
             .maybeSingle(),
         ]);
 
-      return formatCloudStateResponse({
-        entriesData: freshEntriesRes.data || [],
-        contactsData:
-          (freshContactsRes.data as unknown as Array<Record<string, unknown>>) ||
-          [],
-        linksData: freshLinksRes.data || [],
-        templatesData: freshTemplatesRes.data || null,
-        needsProfileSchemaUpdate,
-      });
+      currentEntries = freshEntriesRes.data || [];
+      currentContacts =
+        (freshContactsRes.data as unknown as Array<Record<string, unknown>>) || [];
+      currentLinks = freshLinksRes.data || [];
+      currentTemplates = freshTemplatesRes.data || null;
+    }
+
+    const latestOverridesObj =
+      currentTemplates?.group_overrides &&
+      typeof currentTemplates.group_overrides === "object"
+        ? (currentTemplates.group_overrides as Record<string, string>)
+        : {};
+    if (
+      !needsProfileSchemaUpdate &&
+      latestOverridesObj.__birthdays_seed_version !== OFFICIAL_BIRTHDAYS_SEED_VERSION
+    ) {
+      const seeded = await syncOfficialBirthdaysSeed(db, currentTemplates);
+      if (seeded) {
+        const [seededContactsRes, seededTemplatesRes] = await Promise.all([
+          db.from("escala_contacts").select(CONTACTS_EXTENDED_SELECT),
+          db
+            .from("escala_templates")
+            .select("default_noite, default_manha, group_overrides")
+            .eq("id", "default")
+            .maybeSingle(),
+        ]);
+        currentContacts =
+          (seededContactsRes.data as unknown as Array<Record<string, unknown>>) || [];
+        currentTemplates = seededTemplatesRes.data || currentTemplates;
+      }
     }
 
     return formatCloudStateResponse({
-      entriesData: entriesRes.data || [],
-      contactsData: contactsRes.data || [],
-      linksData: linksRes.data || [],
-      templatesData: templatesRes.data || null,
+      entriesData: currentEntries,
+      contactsData: currentContacts,
+      linksData: currentLinks,
+      templatesData: currentTemplates,
       needsProfileSchemaUpdate,
     });
   } catch (err) {
@@ -941,6 +1046,7 @@ function formatCloudStateResponse(params: {
       ? { ...(params.templatesData.group_overrides as Record<string, string>) }
       : {};
   delete rawOverrides.__catalog_version;
+  delete rawOverrides.__birthdays_seed_version;
 
   const templates = params.templatesData
     ? {
@@ -1227,6 +1333,20 @@ export async function handleCloudStatePut(rawBody: unknown): Promise<HandlerResu
     }
 
     if (templates) {
+      const { data: existingTplRow } = await db
+        .from("escala_templates")
+        .select("group_overrides")
+        .eq("id", "default")
+        .maybeSingle();
+      const existingOverrides =
+        existingTplRow?.group_overrides &&
+        typeof existingTplRow.group_overrides === "object"
+          ? (existingTplRow.group_overrides as Record<string, string>)
+          : {};
+      const preservedBirthdayMarker = existingOverrides.__birthdays_seed_version
+        ? { __birthdays_seed_version: existingOverrides.__birthdays_seed_version }
+        : {};
+
       const { error: tErr } = await db.from("escala_templates").upsert(
         {
           id: "default",
@@ -1235,6 +1355,7 @@ export async function handleCloudStatePut(rawBody: unknown): Promise<HandlerResu
           group_overrides: {
             ...(templates.groupOverrides || {}),
             __catalog_version: OFFICIAL_CATALOG_VERSION,
+            ...preservedBirthdayMarker,
           },
           updated_at: nowIso,
         },
@@ -1721,6 +1842,20 @@ export async function handleCloudStatePost(rawBody: unknown): Promise<HandlerRes
         groupOverrides: Record<string, string>;
       };
       if (templates) {
+        const { data: existingTplRow } = await db
+          .from("escala_templates")
+          .select("group_overrides")
+          .eq("id", "default")
+          .maybeSingle();
+        const existingOverrides =
+          existingTplRow?.group_overrides &&
+          typeof existingTplRow.group_overrides === "object"
+            ? (existingTplRow.group_overrides as Record<string, string>)
+            : {};
+        const preservedBirthdayMarker = existingOverrides.__birthdays_seed_version
+          ? { __birthdays_seed_version: existingOverrides.__birthdays_seed_version }
+          : {};
+
         await db.from("escala_templates").upsert(
           {
             id: "default",
@@ -1729,6 +1864,7 @@ export async function handleCloudStatePost(rawBody: unknown): Promise<HandlerRes
             group_overrides: {
               ...(templates.groupOverrides || {}),
               __catalog_version: OFFICIAL_CATALOG_VERSION,
+              ...preservedBirthdayMarker,
             },
             updated_at: nowIso,
           },

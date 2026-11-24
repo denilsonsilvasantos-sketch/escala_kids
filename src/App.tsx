@@ -16,6 +16,7 @@ import {
   SCHEDULE_GROUPS,
 } from "./data/initialData";
 import { OFFICIAL_VOLUNTEERS } from "./data/officialVolunteers";
+import { OFFICIAL_VOLUNTEER_BIRTHDAYS } from "./data/officialBirthdays";
 import type {
   AppView,
   ContactLink,
@@ -58,6 +59,7 @@ const STORAGE_CONTACTS_KEY = "escala-kids:contacts:v2";
 const STORAGE_CONTACT_NAMES_KEY = "escala-kids:contact-names:v2";
 const STORAGE_CONTACT_LINKS_KEY = "escala-kids:contact-links:v1";
 const STORAGE_PROFILES_KEY = "escala-kids:profiles:v1";
+const STORAGE_BIRTHDAYS_SEED_V1_KEY = "escala-kids:birthdays-seed:v1";
 const STORAGE_CLOUD_ENTRIES_SEEDED_KEY = "escala-kids:cloud-entries-seeded:v1";
 
 function buildOfficialInitialContacts(): {
@@ -253,6 +255,40 @@ export default function App() {
       const norm = normalizeNameKey(k);
       if (norm) out[norm] = normalizeVolunteerProfile(v);
     }
+
+    try {
+      const alreadySeeded = localStorage.getItem(STORAGE_BIRTHDAYS_SEED_V1_KEY);
+      if (!alreadySeeded) {
+        const storedBook = loadJson<Record<string, string>>(STORAGE_CONTACTS_KEY, {});
+        const storedNames = loadJson<Record<string, string>>(
+          STORAGE_CONTACT_NAMES_KEY,
+          {}
+        );
+        const existingContacts =
+          Object.keys(storedBook).length === 0 &&
+          Object.keys(storedNames).length === 0
+            ? buildOfficialInitialContacts().names
+            : normalizeContactBookKeys(storedBook, storedNames).names;
+
+        for (const existingKey of Object.keys(existingContacts)) {
+          const normKey = normalizeNameKey(existingKey);
+          const bday = OFFICIAL_VOLUNTEER_BIRTHDAYS[normKey];
+          if (!bday) continue;
+          const prev = out[normKey] || { ...EMPTY_VOLUNTEER_PROFILE };
+          if (!prev.birthDay || !prev.birthMonth) {
+            out[normKey] = {
+              ...prev,
+              birthDay: bday.birthDay,
+              birthMonth: bday.birthMonth,
+            };
+          }
+        }
+        localStorage.setItem(STORAGE_BIRTHDAYS_SEED_V1_KEY, "1");
+      }
+    } catch {
+      // Ignore storage access errors
+    }
+
     return out;
   });
 
