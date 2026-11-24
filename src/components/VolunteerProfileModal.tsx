@@ -24,6 +24,8 @@ import {
   MONTH_NAMES_PT,
   parseBirthdayInputBR,
   VOLUNTEER_AGE_OPTIONS,
+  VOLUNTEER_AGE_OPTIONS_MANHA,
+  VOLUNTEER_AGE_OPTIONS_NOITE,
   VOLUNTEER_ROLE_OPTIONS,
 } from "../utils/volunteerRoles";
 import { normalizeNameKey } from "../utils/contacts";
@@ -544,8 +546,8 @@ export function VolunteerProfileModal({
 
             <hr className="border-[#EFECE4]" />
 
-            {/* 4. Faixas Etárias Preferidas */}
-            <section className="space-y-2.5">
+            {/* 4. Faixas Etárias Preferidas (Manhã e Noite separados) */}
+            <section className="space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Baby className="w-4 h-4 text-emerald-700" />
@@ -561,7 +563,7 @@ export function VolunteerProfileModal({
                     }
                     className="text-xs font-medium text-emerald-700 hover:text-emerald-900 cursor-pointer"
                   >
-                    Todas
+                    Marcar todas
                   </button>
                   {preferredAges.length > 0 && (
                     <button
@@ -569,45 +571,157 @@ export function VolunteerProfileModal({
                       onClick={() => setPreferredAges([])}
                       className="text-xs font-medium text-zinc-500 hover:text-red-600 cursor-pointer"
                     >
-                      Limpar
+                      Limpar tudo
                     </button>
                   )}
                 </div>
               </div>
               <p className="text-xs text-zinc-500 leading-relaxed">
-                Para Professor(a), Auxiliar e Louvor: marque somente as turmas/idades em que este voluntário gosta de atuar (ex.: apenas <strong>11 e 12 anos</strong>). Se deixar tudo desmarcado, ele poderá ser sugerido para qualquer idade.
+                Para Professor(a), Auxiliar e Louvor: selecione separadamente as turmas da <strong>Manhã</strong> e da <strong>Noite</strong> (ex.: na Noite apenas <strong>11 e 12 anos</strong>). Se deixar tudo desmarcado, poderá atuar em qualquer idade.
               </p>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {VOLUNTEER_AGE_OPTIONS.map((ageOpt) => {
-                  const active = preferredAges.includes(ageOpt.key);
+              <div className="space-y-3">
+                {/* Bloco Manhã */}
+                {(() => {
+                  const manhaKeys = VOLUNTEER_AGE_OPTIONS_MANHA.map((a) => a.key);
+                  const manhaSelectedCount = manhaKeys.filter((k) =>
+                    preferredAges.includes(k)
+                  ).length;
                   return (
-                    <button
-                      key={ageOpt.key}
-                      type="button"
-                      onClick={() => toggleAge(ageOpt.key)}
-                      className={`px-3 py-2 rounded-lg border text-left transition-colors cursor-pointer flex items-center justify-between gap-1.5 ${
-                        active
-                          ? "bg-emerald-50 border-emerald-600 text-emerald-950"
-                          : "bg-white border-[#E8E6DF] text-zinc-700 hover:bg-[#FAF9F5]"
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold truncate">
-                          {ageOpt.label}
+                    <div className="p-3.5 rounded-xl border border-[#E8E6DF] bg-[#FAF9F5] space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-zinc-800">
+                          Culto da Manhã ({manhaSelectedCount}/
+                          {VOLUNTEER_AGE_OPTIONS_MANHA.length})
+                        </span>
+                        <div className="flex items-center gap-2.5">
+                          {manhaSelectedCount <
+                            VOLUNTEER_AGE_OPTIONS_MANHA.length && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreferredAges((prev) =>
+                                  Array.from(new Set([...prev, ...manhaKeys]))
+                                )
+                              }
+                              className="text-[11px] font-medium text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                            >
+                              Todas da manhã
+                            </button>
+                          )}
+                          {manhaSelectedCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreferredAges((prev) =>
+                                  prev.filter((k) => !k.startsWith("manha:"))
+                                )
+                              }
+                              className="text-[11px] font-medium text-zinc-500 hover:text-red-600 cursor-pointer"
+                            >
+                              Limpar
+                            </button>
+                          )}
                         </div>
-                        {ageOpt.manhaHint && (
-                          <div className="text-[10.5px] text-zinc-500 truncate">
-                            {ageOpt.manhaHint}
-                          </div>
-                        )}
                       </div>
-                      {active && (
-                        <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                      )}
-                    </button>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {VOLUNTEER_AGE_OPTIONS_MANHA.map((ageOpt) => {
+                          const active = preferredAges.includes(ageOpt.key);
+                          return (
+                            <button
+                              key={ageOpt.key}
+                              type="button"
+                              onClick={() => toggleAge(ageOpt.key)}
+                              className={`px-3 py-2 rounded-lg border text-left transition-colors cursor-pointer flex items-center justify-between gap-1.5 ${
+                                active
+                                  ? "bg-emerald-50 border-emerald-600 text-emerald-950 font-semibold"
+                                  : "bg-white border-[#E8E6DF] text-zinc-700 hover:bg-zinc-50 font-medium"
+                              }`}
+                            >
+                              <span className="text-xs truncate">
+                                {ageOpt.label}
+                              </span>
+                              {active && (
+                                <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   );
-                })}
+                })()}
+
+                {/* Bloco Noite */}
+                {(() => {
+                  const noiteKeys = VOLUNTEER_AGE_OPTIONS_NOITE.map((a) => a.key);
+                  const noiteSelectedCount = noiteKeys.filter((k) =>
+                    preferredAges.includes(k)
+                  ).length;
+                  return (
+                    <div className="p-3.5 rounded-xl border border-[#E8E6DF] bg-[#FAF9F5] space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-zinc-800">
+                          Culto da Noite ({noiteSelectedCount}/
+                          {VOLUNTEER_AGE_OPTIONS_NOITE.length})
+                        </span>
+                        <div className="flex items-center gap-2.5">
+                          {noiteSelectedCount <
+                            VOLUNTEER_AGE_OPTIONS_NOITE.length && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreferredAges((prev) =>
+                                  Array.from(new Set([...prev, ...noiteKeys]))
+                                )
+                              }
+                              className="text-[11px] font-medium text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                            >
+                              Todas da noite
+                            </button>
+                          )}
+                          {noiteSelectedCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreferredAges((prev) =>
+                                  prev.filter((k) => !k.startsWith("noite:"))
+                                )
+                              }
+                              className="text-[11px] font-medium text-zinc-500 hover:text-red-600 cursor-pointer"
+                            >
+                              Limpar
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {VOLUNTEER_AGE_OPTIONS_NOITE.map((ageOpt) => {
+                          const active = preferredAges.includes(ageOpt.key);
+                          return (
+                            <button
+                              key={ageOpt.key}
+                              type="button"
+                              onClick={() => toggleAge(ageOpt.key)}
+                              className={`px-3 py-2 rounded-lg border text-left transition-colors cursor-pointer flex items-center justify-between gap-1.5 ${
+                                active
+                                  ? "bg-emerald-50 border-emerald-600 text-emerald-950 font-semibold"
+                                  : "bg-white border-[#E8E6DF] text-zinc-700 hover:bg-zinc-50 font-medium"
+                              }`}
+                            >
+                              <span className="text-xs truncate">
+                                {ageOpt.label}
+                              </span>
+                              {active && (
+                                <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </section>
 

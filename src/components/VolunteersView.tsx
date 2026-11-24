@@ -1236,7 +1236,7 @@ export function VolunteersView({
                                 <span className="text-zinc-300" aria-hidden="true">
                                   ·
                                 </span>
-                                <span className="text-zinc-700 truncate max-w-[200px]">
+                                <span className="text-zinc-700 truncate max-w-[300px]">
                                   {agesText}
                                 </span>
                               </>

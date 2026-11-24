@@ -138,14 +138,40 @@ const ALLOWED_ROLE_KEYS = new Set([
 ]);
 
 const ALLOWED_AGE_KEYS = new Set([
-  "3e4",
-  "5",
-  "6",
-  "7",
-  "8",
-  "9e10",
-  "11e12",
+  "manha:3e4",
+  "manha:5e6",
+  "manha:7e8",
+  "manha:9a12",
+  "noite:3e4",
+  "noite:5",
+  "noite:6",
+  "noite:7",
+  "noite:8",
+  "noite:9e10",
+  "noite:11e12",
 ]);
+
+const LEGACY_AGE_EXPANSION: Record<string, string[]> = {
+  "3e4": ["manha:3e4", "noite:3e4"],
+  "5": ["manha:5e6", "noite:5"],
+  "6": ["manha:5e6", "noite:6"],
+  "7": ["manha:7e8", "noite:7"],
+  "8": ["manha:7e8", "noite:8"],
+  "9e10": ["manha:9a12", "noite:9e10"],
+  "11e12": ["manha:9a12", "noite:11e12"],
+};
+
+function expandAgeTokens(tokens: string[]): string[] {
+  const result: string[] = [];
+  for (const token of tokens) {
+    if (ALLOWED_AGE_KEYS.has(token)) {
+      result.push(token);
+    } else if (LEGACY_AGE_EXPANSION[token]) {
+      result.push(...LEGACY_AGE_EXPANSION[token]);
+    }
+  }
+  return Array.from(new Set(result));
+}
 
 function sanitizeProfileFromRow(row: Record<string, unknown>) {
   const birthMonth =
@@ -167,13 +193,8 @@ function sanitizeProfileFromRow(row: Record<string, unknown>) {
   const roles = Array.from(
     new Set(rawRoles.filter((r) => ALLOWED_ROLE_KEYS.has(r)))
   );
-  const preferredAges = Array.from(
-    new Set(
-      rawRoles
-        .filter((r) => r.startsWith("age:"))
-        .map((r) => r.slice(4))
-        .filter((a) => ALLOWED_AGE_KEYS.has(a))
-    )
+  const preferredAges = expandAgeTokens(
+    rawRoles.filter((r) => r.startsWith("age:")).map((r) => r.slice(4))
   );
   const preferredShifts = Array.isArray(row.preferred_shifts)
     ? Array.from(
@@ -234,13 +255,7 @@ function sanitizeIncomingProfile(raw: Record<string, unknown> | undefined | null
       )
     : [];
   const preferredAges = Array.isArray(raw?.preferredAges)
-    ? Array.from(
-        new Set(
-          raw.preferredAges
-            .map((a) => String(a))
-            .filter((a) => ALLOWED_AGE_KEYS.has(a))
-        )
-      )
+    ? expandAgeTokens(raw.preferredAges.map((a) => String(a)))
     : [];
   const storedRoles = [...roles, ...preferredAges.map((a) => `age:${a}`)];
   const preferredShifts = Array.isArray(raw?.preferredShifts)

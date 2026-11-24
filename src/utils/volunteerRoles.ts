@@ -66,39 +66,69 @@ export const MONTH_NAMES_PT = [
 
 export interface VolunteerAgeOption {
   key: VolunteerAgeKey;
+  shift: ShiftType;
   label: string;
   shortLabel: string;
-  manhaHint?: string;
 }
 
+export const VOLUNTEER_AGE_OPTIONS_MANHA: VolunteerAgeOption[] = [
+  { key: "manha:3e4", shift: "manha", label: "3 e 4 anos", shortLabel: "3 e 4" },
+  { key: "manha:5e6", shift: "manha", label: "5 e 6 anos", shortLabel: "5 e 6" },
+  { key: "manha:7e8", shift: "manha", label: "7 e 8 anos", shortLabel: "7 e 8" },
+  { key: "manha:9a12", shift: "manha", label: "9 a 12 anos", shortLabel: "9 a 12" },
+];
+
+export const VOLUNTEER_AGE_OPTIONS_NOITE: VolunteerAgeOption[] = [
+  { key: "noite:3e4", shift: "noite", label: "3 e 4 anos", shortLabel: "3 e 4" },
+  { key: "noite:5", shift: "noite", label: "5 anos", shortLabel: "5" },
+  { key: "noite:6", shift: "noite", label: "6 anos", shortLabel: "6" },
+  { key: "noite:7", shift: "noite", label: "7 anos", shortLabel: "7" },
+  { key: "noite:8", shift: "noite", label: "8 anos", shortLabel: "8" },
+  { key: "noite:9e10", shift: "noite", label: "9 e 10 anos", shortLabel: "9 e 10" },
+  { key: "noite:11e12", shift: "noite", label: "11 e 12 anos", shortLabel: "11 e 12" },
+];
+
 export const VOLUNTEER_AGE_OPTIONS: VolunteerAgeOption[] = [
-  { key: "3e4", label: "3 e 4 anos", shortLabel: "3 e 4" },
-  { key: "5", label: "5 anos", shortLabel: "5 anos", manhaHint: "Manhã: 5 e 6" },
-  { key: "6", label: "6 anos", shortLabel: "6 anos", manhaHint: "Manhã: 5 e 6" },
-  { key: "7", label: "7 anos", shortLabel: "7 anos", manhaHint: "Manhã: 7 e 8" },
-  { key: "8", label: "8 anos", shortLabel: "8 anos", manhaHint: "Manhã: 7 e 8" },
-  { key: "9e10", label: "9 e 10 anos", shortLabel: "9 e 10", manhaHint: "Manhã: 9 a 12" },
-  { key: "11e12", label: "11 e 12 anos", shortLabel: "11 e 12", manhaHint: "Manhã: 9 a 12" },
+  ...VOLUNTEER_AGE_OPTIONS_MANHA,
+  ...VOLUNTEER_AGE_OPTIONS_NOITE,
 ];
 
 export const AGE_LABEL_BY_KEY: Record<VolunteerAgeKey, string> = {
-  "3e4": "3 e 4 anos",
-  "5": "5 anos",
-  "6": "6 anos",
-  "7": "7 anos",
-  "8": "8 anos",
-  "9e10": "9 e 10 anos",
-  "11e12": "11 e 12 anos",
+  "manha:3e4": "Manhã: 3 e 4 anos",
+  "manha:5e6": "Manhã: 5 e 6 anos",
+  "manha:7e8": "Manhã: 7 e 8 anos",
+  "manha:9a12": "Manhã: 9 a 12 anos",
+  "noite:3e4": "Noite: 3 e 4 anos",
+  "noite:5": "Noite: 5 anos",
+  "noite:6": "Noite: 6 anos",
+  "noite:7": "Noite: 7 anos",
+  "noite:8": "Noite: 8 anos",
+  "noite:9e10": "Noite: 9 e 10 anos",
+  "noite:11e12": "Noite: 11 e 12 anos",
 };
 
 export const AGE_SHORT_LABEL_BY_KEY: Record<VolunteerAgeKey, string> = {
-  "3e4": "3 e 4",
-  "5": "5",
-  "6": "6",
-  "7": "7",
-  "8": "8",
-  "9e10": "9 e 10",
-  "11e12": "11 e 12",
+  "manha:3e4": "3 e 4",
+  "manha:5e6": "5 e 6",
+  "manha:7e8": "7 e 8",
+  "manha:9a12": "9 a 12",
+  "noite:3e4": "3 e 4",
+  "noite:5": "5",
+  "noite:6": "6",
+  "noite:7": "7",
+  "noite:8": "8",
+  "noite:9e10": "9 e 10",
+  "noite:11e12": "11 e 12",
+};
+
+const LEGACY_AGE_KEY_EXPANSION: Record<string, VolunteerAgeKey[]> = {
+  "3e4": ["manha:3e4", "noite:3e4"],
+  "5": ["manha:5e6", "noite:5"],
+  "6": ["manha:5e6", "noite:6"],
+  "7": ["manha:7e8", "noite:7"],
+  "8": ["manha:7e8", "noite:8"],
+  "9e10": ["manha:9a12", "noite:9e10"],
+  "11e12": ["manha:9a12", "noite:11e12"],
 };
 
 export const AGE_SENSITIVE_ROLES = new Set<VolunteerRoleKey>([
@@ -142,17 +172,24 @@ export function getRoleKeyForGroupId(groupId: string): VolunteerRoleKey {
 }
 
 export function getAgeKeysForGroupId(groupId: string): VolunteerAgeKey[] {
-  if (groupId.includes("louvor-3a6")) return ["3e4", "5", "6"];
-  if (groupId.endsWith("-3e4")) return ["3e4"];
-  if (groupId.endsWith("-5e6")) return ["5", "6"];
-  if (groupId.endsWith("-5")) return ["5"];
-  if (groupId.endsWith("-6")) return ["6"];
-  if (groupId.endsWith("-7e8")) return ["7", "8"];
-  if (groupId.endsWith("-7")) return ["7"];
-  if (groupId.endsWith("-8")) return ["8"];
-  if (groupId.endsWith("-9a12")) return ["9e10", "11e12"];
-  if (groupId.endsWith("-9e10")) return ["9e10"];
-  if (groupId.endsWith("-11e12")) return ["11e12"];
+  if (groupId === "noite-louvor-3a6") return ["noite:3e4", "noite:5", "noite:6"];
+  if (groupId.startsWith("manha-")) {
+    if (groupId.endsWith("-3e4")) return ["manha:3e4"];
+    if (groupId.endsWith("-5e6")) return ["manha:5e6"];
+    if (groupId.endsWith("-7e8")) return ["manha:7e8"];
+    if (groupId.endsWith("-9a12")) return ["manha:9a12"];
+    return [];
+  }
+  if (groupId.startsWith("noite-")) {
+    if (groupId.endsWith("-3e4")) return ["noite:3e4"];
+    if (groupId.endsWith("-5")) return ["noite:5"];
+    if (groupId.endsWith("-6")) return ["noite:6"];
+    if (groupId.endsWith("-7")) return ["noite:7"];
+    if (groupId.endsWith("-8")) return ["noite:8"];
+    if (groupId.endsWith("-9e10")) return ["noite:9e10"];
+    if (groupId.endsWith("-11e12")) return ["noite:11e12"];
+    return [];
+  }
   return [];
 }
 
@@ -173,7 +210,37 @@ export function matchesAgePreference(
 
 export function formatAgePreferencesLabel(ages: VolunteerAgeKey[]): string {
   if (!ages || ages.length === 0) return "";
-  return ages.map((a) => AGE_SHORT_LABEL_BY_KEY[a] || a).join(", ") + " anos";
+  const selectedSet = new Set(ages);
+  const manhaSelected = VOLUNTEER_AGE_OPTIONS_MANHA.filter((o) =>
+    selectedSet.has(o.key)
+  );
+  const noiteSelected = VOLUNTEER_AGE_OPTIONS_NOITE.filter((o) =>
+    selectedSet.has(o.key)
+  );
+
+  if (
+    manhaSelected.length === VOLUNTEER_AGE_OPTIONS_MANHA.length &&
+    noiteSelected.length === VOLUNTEER_AGE_OPTIONS_NOITE.length
+  ) {
+    return "Todas as faixas (Manhã e Noite)";
+  }
+
+  const parts: string[] = [];
+  if (manhaSelected.length > 0) {
+    parts.push(
+      manhaSelected.length === VOLUNTEER_AGE_OPTIONS_MANHA.length
+        ? "Manhã: todas"
+        : `Manhã: ${manhaSelected.map((o) => o.shortLabel).join(", ")} anos`
+    );
+  }
+  if (noiteSelected.length > 0) {
+    parts.push(
+      noiteSelected.length === VOLUNTEER_AGE_OPTIONS_NOITE.length
+        ? "Noite: todas"
+        : `Noite: ${noiteSelected.map((o) => o.shortLabel).join(", ")} anos`
+    );
+  }
+  return parts.join("; ");
 }
 
 export function formatBirthdayDDMM(
@@ -360,14 +427,22 @@ export function normalizeVolunteerProfile(
   const rolesList: VolunteerRoleKey[] = [];
   const agesList: VolunteerAgeKey[] = [];
 
+  const pushAgeToken = (token: string) => {
+    if (validAgeSet.has(token)) {
+      agesList.push(token as VolunteerAgeKey);
+      return;
+    }
+    const expanded = LEGACY_AGE_KEY_EXPANSION[token];
+    if (expanded) {
+      agesList.push(...expanded);
+    }
+  };
+
   if (Array.isArray(raw.roles)) {
     for (const item of raw.roles) {
       const str = String(item);
       if (str.startsWith("age:")) {
-        const ageKey = str.slice(4);
-        if (validAgeSet.has(ageKey)) {
-          agesList.push(ageKey as VolunteerAgeKey);
-        }
+        pushAgeToken(str.slice(4));
       } else if (validRoleSet.has(str)) {
         rolesList.push(str as VolunteerRoleKey);
       }
@@ -376,10 +451,7 @@ export function normalizeVolunteerProfile(
 
   if (Array.isArray(raw.preferredAges)) {
     for (const item of raw.preferredAges) {
-      const str = String(item);
-      if (validAgeSet.has(str)) {
-        agesList.push(str as VolunteerAgeKey);
-      }
+      pushAgeToken(String(item));
     }
   }
 

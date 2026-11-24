@@ -90,13 +90,17 @@ export type VolunteerRoleKey =
   | "coordenador";
 
 export type VolunteerAgeKey =
-  | "3e4"
-  | "5"
-  | "6"
-  | "7"
-  | "8"
-  | "9e10"
-  | "11e12";
+  | "manha:3e4"
+  | "manha:5e6"
+  | "manha:7e8"
+  | "manha:9a12"
+  | "noite:3e4"
+  | "noite:5"
+  | "noite:6"
+  | "noite:7"
+  | "noite:8"
+  | "noite:9e10"
+  | "noite:11e12";
 
 export type FamilySyncMode = "same_shift" | "same_day";
 
